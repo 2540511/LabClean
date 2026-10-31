@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<!-- ↑ 文档类型声明：告诉浏览器"这是 HTML5 页面"，必须写在文件第一行 -->
+
+<html lang="zh-CN">
+<!-- ↑ lang 属性告诉浏览器和搜索引擎：本页主要语言是简体中文（影响无障碍朗读、SEO、翻译提示） -->
+
+<head>
+  <!-- head 里放的是"给浏览器看"的信息，不会直接显示在页面上 -->
+
+  <meta charset="UTF-8">
+  <!-- 字符编码：UTF-8 是全球通用编码，不写或写错，中文会变成乱码 -->
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- 移动端适配的第一行代码：让页面宽度 = 设备宽度，缩放比例 1.0，不加手机上会缩小显示 -->
+
+  <meta name="description" content="一个用于练习前端知识点的迷你购物系统">
+  <!-- SEO：搜索引擎结果里显示的页面简介 -->
+
+  <title>迷你商城 | 前端知识点练习</title>
+  <!-- 浏览器标签页上显示的标题 -->
+
+  <link rel="stylesheet" href="css/style.css">
+  <!-- 【知识点】用 link 引入外部 CSS，href 是相对路径（相对当前 html 文件所在文件夹） -->
+</head>
+
+<body>
+  <!-- body 里放的是"给用户看"的内容 -->
+
+  <!-- ============================================================
+       区域一：页头 header
+       【知识点】语义化标签：header / main / aside / footer 比满屏 div 更利于 SEO 和无障碍
+       ============================================================ -->
+  <header class="header">
+    <div class="header__inner">
+
+      <!-- Logo：题目要求图片用文字代替，所以这里用文字代替图片图标 -->
+      <a class="logo" href="#">
+        <span class="logo__mark">购</span>
+        <span class="logo__text">迷你商城</span>
+      </a>
+
+      <!-- 搜索框：用 form 包起来，这样按回车也能提交（表单的原生能力） -->
+      <form class="search" id="searchForm" role="search">
+        <!-- 【知识点】label 的 for 必须等于 input 的 id，点击文字就能聚焦输入框，无障碍必备 -->
+        <label class="sr-only" for="searchInput">搜索商品</label>
+        <input
+          id="searchInput"
+          class="search__input"
+          type="search"
+          placeholder="搜索商品，例如：耳机"
+          autocomplete="off">
+        <button class="search__btn" type="submit">搜索</button>
+      </form>
+
+      <!-- 右侧操作区 -->
+      <div class="header__actions">
+        <!-- 【知识点】button 一定要写 type="button"，否则在 form 里默认是 submit 会触发提交 -->
+        <button id="themeBtn" class="icon-btn" type="button" title="切换日间/夜间主题">🌙 夜间</button>
+        <button id="orderBtn" class="icon-btn" type="button" title="查看我的订单">📦 订单</button>
+        <button id="cartBtn" class="icon-btn icon-btn--cart" type="button" title="打开购物车">
+          购物车
+          <!-- 角标：JS 会动态改它的数字，所以给了 id -->
+          <span id="cartBadge" class="badge">0</span>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- ============================================================
+       区域二：主体内容 main
+       ============================================================ -->
+  <main class="container">
+
+    <!-- 工具栏：标题 + 排序 + 分类筛选 -->
+    <section class="toolbar">
+      <div class="toolbar__row">
+        <h2 class="toolbar__title">全部商品</h2>
+
+        <div class="toolbar__right">
+          <label class="sr-only" for="sortSelect">排序方式</label>
+          <!-- 【知识点】select 下拉框：每个 option 的 value 是给程序用的值，标签中间是给人看的文字 -->
+          <select id="sortSelect" class="select">
+            <option value="default">默认排序</option>
+            <option value="price-asc">价格：从低到高</option>
+            <option value="price-desc">价格：从高到低</option>
+            <option value="sales-desc">销量优先</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 分类按钮组：内容由 JS 动态生成，演示"数据驱动视图" -->
+      <div class="filters" id="categoryFilters"></div>
+    </section>
+
+    <!-- 结果统计文字 -->
+    <p class="result-tip" id="resultTip"></p>
+
+    <!-- 商品网格：JS 把商品卡片塞进这里 -->
+    <!-- aria-live="polite"：内容变化时，屏幕阅读器会温和地播报，无障碍细节 -->
+    <section class="grid" id="productList" aria-live="polite"></section>
+
+    <!-- 空状态：默认用 hidden 属性隐藏，没搜到结果时再显示 -->
+    <div class="empty" id="emptyState" hidden>
+      <p class="empty__emoji">🔍</p>
+      <p class="empty__text">没有找到匹配的商品，换个关键词试试</p>
+    </div>
+
+  </main>
+
+  <!-- ============================================================
+       区域三：购物车抽屉（从右侧滑出的面板）
+       【知识点】aside 语义：和主内容相关但可独立存在的侧边内容
+       ============================================================ -->
+  <aside class="drawer" id="cartDrawer" aria-hidden="true">
+    <div class="drawer__header">
+      <h2 class="drawer__title">我的购物车</h2>
+      <button class="icon-btn" id="closeCartBtn" type="button" title="关闭">✕</button>
+    </div>
+
+    <!-- 购物车商品列表，由 JS 渲染 -->
+    <div class="drawer__body" id="cartList"></div>
+
+    <!-- 底部结算区 -->
+    <div class="drawer__footer">
+      <div class="summary">
+        <div class="summary__row"><span>商品件数</span><strong id="totalCount">0</strong></div>
+        <div class="summary__row"><span>商品总额</span><strong id="totalPrice">¥0.00</strong></div>
+        <div class="summary__row summary__row--discount"><span>优惠（满200减5%，满500减10%）</span><strong id="discountValue">-¥0.00</strong></div>
+        <div class="summary__row summary__row--big"><span>应付金额</span><strong id="payPrice">¥0.00</strong></div>
+      </div>
+
+      <div class="drawer__actions">
+        <button class="btn btn--ghost" id="clearCartBtn" type="button">清空购物车</button>
+        <button class="btn btn--primary" id="checkoutBtn" type="button">去结算</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 遮罩层：抽屉/弹窗打开时铺在下面，点击它关闭 -->
+  <div class="mask" id="mask" hidden></div>
+
+  <!-- ============================================================
+       区域四：通用弹窗（商品详情 / 订单记录 / 结算成功 都复用它）
+       ============================================================ -->
+  <div class="modal" id="modal" hidden>
+    <!-- role="dialog" + aria-modal="true" 是无障碍规范里弹窗的标准写法 -->
+    <div class="modal__box" role="dialog" aria-modal="true" aria-label="弹窗内容">
+      <button class="modal__close" id="modalCloseBtn" type="button" title="关闭">✕</button>
+      <div class="modal__content" id="modalContent"></div>
+    </div>
+  </div>
+
+  <!-- 轻提示（Toast）容器：JS 会往里面塞提示条 -->
+  <div class="toast" id="toastBox"></div>
+
+  <!-- 【知识点】noscript：当用户禁用 JS 时才会显示，属于优雅降级 -->
+  <noscript>
+    <p style="text-align:center;padding:20px">本页面需要开启 JavaScript 才能使用完整功能。</p>
+  </noscript>
+
+  <!-- 【知识点】脚本放 body 最后：此时 DOM 已解析完，脚本能直接拿到元素，不需要等 DOMContentLoaded -->
+  <script src="js/app.js"></script>
+</body>
+
+</html>
