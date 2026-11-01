@@ -1071,6 +1071,15 @@ select {
   color: var(--muted);
   line-height: 1.5;
 }
+/* 报错详情按原样换行显示，方便直接复制 */
+.err-text {
+  white-space: pre-wrap;
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  max-height: 240px;
+  overflow: auto;
+}
 .toast-error {
   border-left: 4px solid var(--danger);
 }

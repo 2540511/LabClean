@@ -79,7 +79,10 @@ export function buildWorkbook(sheets: ExportSheet[]): XLSX.WorkBook {
   const used = new Set<string>()
 
   for (const sheet of sheets) {
-    const ws = XLSX.utils.aoa_to_sheet(sheet.aoa)
+    // Excel 的 XML 不允许 0x00-0x08、0x0B、0x0C、0x0E-0x1F 这些控制字符，
+    // 数据里一旦混进去，生成的文件打开就会提示「需要修复」，所以导出前统一剔掉
+    const aoa = sheet.aoa.map((row) => row.map(cleanExportValue))
+    const ws = XLSX.utils.aoa_to_sheet(aoa)
     // 根据内容估算列宽，避免打开就是一堆 ####
     const widths: { wch: number }[] = []
     for (let c = 0; c < (sheet.aoa[0]?.length ?? 0); c++) {
@@ -95,6 +98,13 @@ export function buildWorkbook(sheets: ExportSheet[]): XLSX.WorkBook {
     XLSX.utils.book_append_sheet(wb, ws, safeSheetName(sheet.name, used))
   }
   return wb
+}
+
+const INVALID_XML_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g
+
+function cleanExportValue(v: string | number | boolean | Date | null | undefined) {
+  if (typeof v !== 'string') return v ?? null
+  return INVALID_XML_CHARS.test(v) ? v.replace(INVALID_XML_CHARS, '') : v
 }
 
 export function workbookToBlob(wb: XLSX.WorkBook): Blob {

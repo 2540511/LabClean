@@ -41,6 +41,19 @@ const EMPTY_SET = new Set<number>()
 /** 单个文件最多导入几个工作表，避免一个几十表的工作簿把内存吃光 */
 const MAX_SHEETS_PER_FILE = 6
 
+/** 把异常整理成「能复制给人看」的一行 + 栈顶几行 */
+function describeError(e: unknown): string {
+  if (e instanceof Error) {
+    const stack = (e.stack ?? '')
+      .split('\n')
+      .slice(1, 4)
+      .map((l) => l.trim())
+      .join('\n')
+    return `${e.name}: ${e.message}${stack ? `\n${stack}` : ''}`
+  }
+  return String(e)
+}
+
 function defaultColumnIndex(ds: Dataset): number {
   const idx = ds.columns.findIndex((c) => c.type === 'number' && c.distinct > 1)
   return idx >= 0 ? idx : 0
@@ -208,7 +221,7 @@ export default function App() {
         setActiveId(fresh[0].id)
         setView('table')
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(describeError(e))
       } finally {
         setBusy(null)
       }
@@ -442,7 +455,7 @@ export default function App() {
         const name = `${base}_清洗结果_${nowStamp()}.xlsx`
         setSaved({ url: downloadBlob(workbookToBlob(wb), name), name })
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(describeError(e))
       } finally {
         setBusy(null)
       }
@@ -469,7 +482,7 @@ export default function App() {
         const name = `数据对比_${nowStamp()}.xlsx`
         setSaved({ url: downloadBlob(workbookToBlob(buildWorkbook(buildCompareSheets(items))), name), name })
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(describeError(e))
       } finally {
         setBusy(null)
       }
@@ -791,8 +804,16 @@ export default function App() {
         <div className="toast toast-error" role="alert">
           <div>
             <strong>处理失败</strong>
-            <p>{error}</p>
+            <p className="err-text">{error}</p>
           </div>
+          <button
+            className="btn btn-small"
+            onClick={() => {
+              void navigator.clipboard?.writeText(error).catch(() => {})
+            }}
+          >
+            复制详情
+          </button>
           <button className="btn btn-small" onClick={() => setError(null)}>
             知道了
           </button>
