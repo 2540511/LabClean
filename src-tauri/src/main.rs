@@ -4,6 +4,7 @@
 
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// 启动黑匣子：把关键事件写进日志，桌面版白屏时这是唯一线索。
 fn log_paths() -> Vec<PathBuf> {
@@ -44,6 +45,24 @@ fn main() {
         env!("CARGO_PKG_VERSION")
     ));
 
+    // 部分环境（新系统 / 杀软挂钩 / 虚拟机显卡）下 WebView2 初始化会卡死。
+    // 这两个参数是社区验证过的绕过方式，允许用户自己覆盖。
+    if std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
+        std::env::set_var(
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            "--disable-features=RendererCodeIntegrity --disable-gpu",
+        );
+        log_line("已注入 WebView2 兼容参数");
+    }
+
+    // 看门狗线程：主线程如果卡在窗口创建上，这里会持续留下记录
+    std::thread::spawn(|| {
+        for secs in [5u64, 15, 30] {
+            std::thread::sleep(Duration::from_secs(if secs == 5 { 5 } else { 10 }));
+            log_line(&format!("看门狗: 已启动 {secs} 秒"));
+        }
+    });
+
     let result = tauri::Builder::default()
         .setup(|_app| {
             log_line("setup: 应用初始化完成");
@@ -54,7 +73,7 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .map(|app| {
-            log_line("窗口已创建，进入事件循环");
+            log_line("builder 完成，进入事件循环");
             app.run(|_app, event| {
                 if let tauri::RunEvent::Exit = event {
                     log_line("退出");
