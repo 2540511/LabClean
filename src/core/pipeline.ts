@@ -42,6 +42,35 @@ export interface StepRecord {
   affected: number
 }
 
+export function makeStepId(): string {
+  return `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+}
+
+/** 在原始数据上顺序跑完一组步骤，返回步骤记录和最终状态 */
+export function buildStepSequence(
+  baselineRows: CellValue[][],
+  columns: Column[],
+  specs: OpSpec[],
+): { steps: StepRecord[]; rows: CellValue[][]; origins: number[] } {
+  let rows = baselineRows
+  let origins = baselineRows.map((_, i) => i)
+  const steps: StepRecord[] = []
+  for (const spec of specs) {
+    const out = applySpec(rows, origins, columns, spec)
+    steps.push({
+      id: makeStepId(),
+      at: Date.now(),
+      spec,
+      title: opTitle(spec),
+      detail: out.detail,
+      affected: out.affected,
+    })
+    rows = out.rows
+    origins = out.origins
+  }
+  return { steps, rows, origins }
+}
+
 export function opTitle(spec: OpSpec): string {
   switch (spec.kind) {
     case 'trim':

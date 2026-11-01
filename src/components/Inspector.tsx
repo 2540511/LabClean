@@ -27,6 +27,7 @@ interface Props {
   onRun: (spec: OpSpec) => void
   onUndo: () => void
   onRedo: () => void
+  onOpenTemplates: () => void
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'warn' | 'bad' | 'good' }) {
@@ -86,6 +87,7 @@ export function Inspector({
   onRun,
   onUndo,
   onRedo,
+  onOpenTemplates,
 }: Props) {
   const [strategy, setStrategy] = useState<FillStrategy>('median')
   const stats = column.numeric
@@ -287,11 +289,16 @@ export function Inspector({
       <section className="panel panel-grow">
         <div className="panel-head">
           清洗步骤
-          {steps.length > 0 ? (
-            <span className="panel-hint">
-              {cursor}/{steps.length}
-            </span>
-          ) : null}
+          <span className="panel-hint">
+            <button className="link-btn" onClick={onOpenTemplates}>
+              模板
+            </button>
+            {steps.length > 0 ? (
+              <span className="step-count">
+                {cursor}/{steps.length}
+              </span>
+            ) : null}
+          </span>
         </div>
         <div className="log-list">
           {steps.length === 0 ? (

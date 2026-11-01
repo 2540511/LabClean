@@ -19,6 +19,14 @@ import {
 } from '../src/core/clean'
 import { replay, type OpSpec } from '../src/core/pipeline'
 import { sourceMetrics, type DataSource } from '../src/core/compare'
+import {
+  findColumnByName,
+  loadTemplates,
+  materializeSteps,
+  persistTemplates,
+  templateStepLabel,
+  toTemplateSteps,
+} from '../src/core/template'
 
 let passed = 0
 const failures: string[] = []
@@ -295,6 +303,43 @@ console.log('\n[11] 多数据源对比')
   eq('填充后缺失率归零', mc.missingRate, 0)
   eq('清洗步数被记录', mc.steps, 1)
   check('原始数据源指标不受影响', sourceMetrics(sa).missingRate > 0)
+}
+
+console.log('\n[12] 清洗模板（按列名套用到别的表）')
+{
+  const src = buildDataset('a.csv', '数据', parseCsv('姓名,城市\n张三, 北京 \n李四,上海\n张三, 北京 \n'))
+  const specs: OpSpec[] = [
+    { kind: 'trim' },
+    { kind: 'fillMissing', colIndex: 1, colName: '城市', strategy: 'text', value: '未填写' },
+  ]
+  const tplSteps = toTemplateSteps(specs, src.columns)
+  eq('模板按列名记录而不是下标', tplSteps[1], {
+    kind: 'fillMissing',
+    colName: '城市',
+    strategy: 'text',
+    custom: '未填写',
+  })
+  eq('步骤可读标签', templateStepLabel(tplSteps[1]), '填充缺失（城市 · 填「未填写」）')
+
+  const dst = buildDataset('b.csv', '数据', parseCsv('姓名,城市\n王五,\n赵六, 广州 \n'))
+  const mat = materializeSteps(tplSteps, dst.columns)
+  eq('套用后步骤数一致', mat.length, 2)
+  const out = replay(dst.rows, dst.columns, mat)
+  eq('空格被清理', out.rows[1][1], '广州')
+  eq('空缺被填充', out.rows[0][1], '未填写')
+
+  const other = buildDataset('c.csv', '数据', parseCsv('甲,乙\n1,2\n'))
+  eq('列名对不上的步骤被跳过', materializeSteps(tplSteps, other.columns).length, 1)
+  check('按列名能找回列', findColumnByName(src.columns, '城市')?.index === 1)
+
+  // 没有 localStorage 的环境（node / 隐私模式）也不能崩
+  check('无存储环境时读模板返回空数组', loadTemplates().length === 0)
+  try {
+    persistTemplates([{ id: 'x', name: 'x', createdAt: 0, steps: [] }])
+    check('无存储环境时写模板不抛错', true)
+  } catch {
+    check('无存储环境时写模板不抛错', false, '抛出了异常')
+  }
 }
 
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)

@@ -5,12 +5,29 @@ import { DataTable } from './components/DataTable'
 import { EmptyState } from './components/EmptyState'
 import { Inspector } from './components/Inspector'
 import { Rail } from './components/Rail'
+import { TemplateDialog, type ApplyScope } from './components/TemplateDialog'
 import { resolveFillValue } from './core/clean'
 import { resolveCurrent, sourceMetrics, type DataSource } from './core/compare'
 import { buildDemoDatasets } from './core/demo'
-import { applySpec, opTitle, replay, type OpSpec, type StepRecord } from './core/pipeline'
+import {
+  applySpec,
+  buildStepSequence,
+  makeStepId,
+  opTitle,
+  replay,
+  type OpSpec,
+  type StepRecord,
+} from './core/pipeline'
 import { rebuildDataset } from './core/profile'
 import { buildCompareSheets, buildReportSheets } from './core/report'
+import {
+  BUILTIN_TEMPLATES,
+  loadTemplates,
+  materializeSteps,
+  persistTemplates,
+  toTemplateSteps,
+  type CleanTemplate,
+} from './core/template'
 import type { Dataset } from './core/types'
 import { buildWorkbook, downloadBlob, workbookToBlob } from './core/xlsx-io'
 import { analyzeColumn } from './lib/analyze'
@@ -26,10 +43,6 @@ const MAX_SHEETS_PER_FILE = 6
 function defaultColumnIndex(ds: Dataset): number {
   const idx = ds.columns.findIndex((c) => c.type === 'number' && c.distinct > 1)
   return idx >= 0 ? idx : 0
-}
-
-function makeStepId(): string {
-  return `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
 }
 
 function makeSource(
@@ -62,6 +75,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
   const [encoding, setEncoding] = useState('')
+  const [templates, setTemplates] = useState<CleanTemplate[]>(() => [
+    ...BUILTIN_TEMPLATES,
+    ...loadTemplates(),
+  ])
+  const [tplOpen, setTplOpen] = useState(false)
 
   const clientRef = useRef<TableClient | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -199,7 +217,9 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('demo') === '1') loadDemo()
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('demo') === '1') loadDemo()
+    if (params.get('dialog') === 'templates') setTplOpen(true)
     // 只在首次挂载时判断一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -257,25 +277,63 @@ export default function App() {
   const runSequence = useCallback(
     (specs: OpSpec[]) => {
       if (!active) return
-      let rows = active.baseline.rows
-      let origins = active.baseline.rows.map((_, i) => i)
-      const built: StepRecord[] = []
-      for (const spec of specs) {
-        const out = applySpec(rows, origins, active.baseline.columns, spec)
-        built.push({
-          id: makeStepId(),
-          at: Date.now(),
-          spec,
-          title: opTitle(spec),
-          detail: out.detail,
-          affected: out.affected,
-        })
-        rows = out.rows
-        origins = out.origins
-      }
+      const { steps: built } = buildStepSequence(
+        active.baseline.rows,
+        active.baseline.columns,
+        specs,
+      )
       patchActive(() => ({ steps: built, cursor: built.length }))
     },
     [active, patchActive],
+  )
+
+  // ---------- 模板 ----------
+  const saveTemplate = useCallback(
+    (name: string) => {
+      if (!active) return
+      const applied = active.steps.slice(0, active.cursor)
+      if (applied.length === 0) return
+      const tpl: CleanTemplate = {
+        id: `tpl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`,
+        name,
+        createdAt: Date.now(),
+        steps: toTemplateSteps(
+          applied.map((s) => s.spec),
+          active.baseline.columns,
+        ),
+      }
+      setTemplates((prev) => {
+        const next = [tpl, ...prev]
+        persistTemplates(next)
+        return next
+      })
+    },
+    [active],
+  )
+
+  const deleteTemplate = useCallback((id: string) => {
+    setTemplates((prev) => {
+      const next = prev.filter((t) => t.id !== id)
+      persistTemplates(next)
+      return next
+    })
+  }, [])
+
+  const applyTemplate = useCallback(
+    (id: string, scope: ApplyScope) => {
+      const tpl = templates.find((t) => t.id === id)
+      if (!tpl) return
+      setSources((prev) =>
+        prev.map((s) => {
+          if (scope === 'active' && s.id !== activeId) return s
+          const specs = materializeSteps(tpl.steps, s.baseline.columns)
+          const { steps: built } = buildStepSequence(s.baseline.rows, s.baseline.columns, specs)
+          return { ...s, steps: built, cursor: built.length }
+        }),
+      )
+      setTplOpen(false)
+    },
+    [activeId, templates],
   )
 
   /** ?auto=1：自动演示一遍清洗流程（比赛演示 + 自检） */
@@ -587,6 +645,7 @@ export default function App() {
             onRun={runOp}
             onUndo={undo}
             onRedo={redo}
+            onOpenTemplates={() => setTplOpen(true)}
           />
         </div>
       ) : (
@@ -625,6 +684,17 @@ export default function App() {
           <span>未做清洗</span>
         )}
       </footer>
+
+      <TemplateDialog
+        open={tplOpen}
+        templates={templates}
+        stepCount={active?.cursor ?? 0}
+        sourceCount={sources.length}
+        onClose={() => setTplOpen(false)}
+        onSave={saveTemplate}
+        onApply={applyTemplate}
+        onDelete={deleteTemplate}
+      />
 
       {error ? (
         <div className="toast toast-error" role="alert">
