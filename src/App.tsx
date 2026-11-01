@@ -3,6 +3,7 @@ import { ChartsDock } from './components/ChartsDock'
 import { CompareView } from './components/CompareView'
 import { DataTable } from './components/DataTable'
 import { EmptyState } from './components/EmptyState'
+import { FuzzyDialog } from './components/FuzzyDialog'
 import { Inspector } from './components/Inspector'
 import { Rail } from './components/Rail'
 import { TemplateDialog, type ApplyScope } from './components/TemplateDialog'
@@ -80,6 +81,8 @@ export default function App() {
     ...loadTemplates(),
   ])
   const [tplOpen, setTplOpen] = useState(false)
+  const [fuzzyOpen, setFuzzyOpen] = useState(false)
+  const [fuzzyAuto, setFuzzyAuto] = useState(false)
 
   const clientRef = useRef<TableClient | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -127,9 +130,18 @@ export default function App() {
     [activeId],
   )
 
-  /** 切到另一个数据源时，默认选中它第一个有变化的数值列 */
+  /** 切到另一个数据源时，默认选中它第一个有变化的数值列；URL 里指定了列名则优先 */
   useEffect(() => {
-    if (active) setSelected(defaultColumnIndex(active.baseline))
+    if (!active) return
+    const wanted = new URLSearchParams(window.location.search).get('col')
+    if (wanted) {
+      const idx = active.baseline.columns.findIndex((c) => c.name === wanted)
+      if (idx >= 0) {
+        setSelected(idx)
+        return
+      }
+    }
+    setSelected(defaultColumnIndex(active.baseline))
     // 只在切换数据源时重置
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id])
@@ -220,6 +232,10 @@ export default function App() {
     const params = new URLSearchParams(window.location.search)
     if (params.get('demo') === '1') loadDemo()
     if (params.get('dialog') === 'templates') setTplOpen(true)
+    if (params.get('dialog') === 'fuzzy') {
+      setFuzzyOpen(true)
+      setFuzzyAuto(params.get('autoscan') === '1')
+    }
     // 只在首次挂载时判断一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -646,6 +662,7 @@ export default function App() {
             onUndo={undo}
             onRedo={redo}
             onOpenTemplates={() => setTplOpen(true)}
+            onOpenFuzzy={() => setFuzzyOpen(true)}
           />
         </div>
       ) : (
@@ -684,6 +701,27 @@ export default function App() {
           <span>未做清洗</span>
         )}
       </footer>
+
+      {fuzzyOpen && dataset && currentColumn ? (
+        <FuzzyDialog
+          open={fuzzyOpen}
+          rows={dataset.rows}
+          column={currentColumn}
+          busy={!!busy}
+          autoScan={fuzzyAuto}
+          onClose={() => setFuzzyOpen(false)}
+          onApply={(threshold, dropRows) => {
+            runOp({
+              kind: 'fuzzyDedupe',
+              colIndex: currentColumn.index,
+              colName: currentColumn.name,
+              threshold,
+              dropRows,
+            })
+            setFuzzyOpen(false)
+          }}
+        />
+      ) : null}
 
       <TemplateDialog
         open={tplOpen}

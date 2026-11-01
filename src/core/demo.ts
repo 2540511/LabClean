@@ -15,7 +15,12 @@ interface Knobs {
 }
 
 function makeRows(k: Knobs): CellValue[][] {
-  const rows: CellValue[][] = [['样品编号', '温度(℃)', '浓度(mg/L)', '重复次数', '采样日期', '备注']]
+  const rows: CellValue[][] = [
+    ['样品编号', '温度(℃)', '浓度(mg/L)', '重复次数', '采样日期', '记录人', '备注'],
+  ]
+
+  // 记录人里故意混入「张 三」「张叁」这类形近写法，用来演示模糊去重
+  const recorders = ['张三', '李四', '王五', '张 三', '张叁', '赵六']
 
   let seed = k.seed
   const rnd = (): number => {
@@ -45,7 +50,7 @@ function makeRows(k: Knobs): CellValue[][] {
           : i % 11 === 0
             ? '待复测'
             : '正常'
-    rows.push([sample, temp, conc, repeat, date, note])
+    rows.push([sample, temp, conc, repeat, date, recorders[i % recorders.length], note])
   }
 
   for (let d = 0; d < k.duplicateRows; d++) {

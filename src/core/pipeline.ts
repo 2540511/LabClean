@@ -23,6 +23,14 @@ export type OpSpec =
   | { kind: 'dropDuplicates' }
   | { kind: 'dropEmptyRows' }
   | { kind: 'normalizeNumbers'; colIndex: number; colName: string }
+  | {
+      kind: 'fuzzyDedupe'
+      colIndex: number
+      colName: string
+      threshold: number
+      /** 扫描时算好的待删行下标：重放时直接用，结果才稳定 */
+      dropRows: number[]
+    }
 
 export interface StepOutcome {
   rows: CellValue[][]
@@ -83,6 +91,8 @@ export function opTitle(spec: OpSpec): string {
       return '删除全空行'
     case 'normalizeNumbers':
       return '数字规范化'
+    case 'fuzzyDedupe':
+      return `模糊去重（${spec.colName}）`
   }
 }
 
@@ -124,6 +134,23 @@ export function applySpec(
         origins: kept.map((i) => origins[i]),
         affected: r.affected,
         detail: r.detail,
+      }
+    }
+    case 'fuzzyDedupe': {
+      const drop = new Set(spec.dropRows)
+      const keptRows: CellValue[][] = []
+      const keptIdx: number[] = []
+      for (let i = 0; i < rows.length; i++) {
+        if (drop.has(i)) continue
+        keptRows.push(rows[i])
+        keptIdx.push(i)
+      }
+      const removed = rows.length - keptRows.length
+      return {
+        rows: keptRows,
+        origins: keptIdx.map((i) => origins[i]),
+        affected: removed,
+        detail: `「${spec.colName}」模糊去重删除 ${removed} 行（相似度阈值 ${spec.threshold.toFixed(2)}）`,
       }
     }
   }

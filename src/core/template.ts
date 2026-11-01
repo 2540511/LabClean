@@ -76,6 +76,9 @@ export function toTemplateSteps(specs: OpSpec[], columns: Column[]): TemplateSte
           custom: spec.strategy === 'text' && typeof spec.value === 'string' ? spec.value : undefined,
         })
         break
+      case 'fuzzyDedupe':
+        // 模糊去重的待删行是「扫出来的」，换成另一张表就不成立了，所以不进模板
+        break
     }
   }
   return out

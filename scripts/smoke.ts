@@ -20,6 +20,13 @@ import {
 import { replay, type OpSpec } from '../src/core/pipeline'
 import { sourceMetrics, type DataSource } from '../src/core/compare'
 import {
+  DEFAULT_FUZZY,
+  findFuzzyGroups,
+  levenshtein,
+  normalizeText,
+  similarity,
+} from '../src/core/fuzzy'
+import {
   findColumnByName,
   loadTemplates,
   materializeSteps,
@@ -340,6 +347,44 @@ console.log('\n[12] 清洗模板（按列名套用到别的表）')
   } catch {
     check('无存储环境时写模板不抛错', false, '抛出了异常')
   }
+}
+
+console.log('\n[13] 模糊去重')
+{
+  const opt = { ...DEFAULT_FUZZY, threshold: 0.5 }
+  eq('全角转半角+去空格+小写', normalizeText('ＡＢＣ　１２３', opt), 'abc123')
+  eq('去标点', normalizeText('张,三。', opt), '张三')
+  eq('编辑距离 kitten→sitting', levenshtein('kitten', 'sitting'), 3)
+  check('相似度：完全相同为 1', similarity('张三', '张三') === 1)
+  check('相似度：差一个字为 0.5', Math.abs(similarity('张三', '张叁') - 0.5) < 1e-9, String(similarity('张三', '张叁')))
+
+  const rows: CellValue[][] = [['张三'], ['张 三'], ['张叁'], ['李四'], ['']]
+  const res = findFuzzyGroups(rows, 0, opt)
+  check('找到疑似重复组', res.groups.length >= 1, `实际 ${res.groups.length}`)
+  eq('待删行下标（保留每组第一条）', res.dropRows, [1, 2])
+  eq('跳过了空值', res.scanned, 4)
+
+  const strict = findFuzzyGroups(rows, 0, { ...DEFAULT_FUZZY, threshold: 0.99 })
+  eq('阈值 0.99 时只合并归一化后完全相同的', strict.dropRows, [1])
+
+  // 传入拼音转换后，「张三」和「zhangsan」也能归到一起
+  const toPinyin = (s: string) => s.replace(/张三/g, 'zhangsan').replace(/张叁/g, 'zhangsan')
+  const py = findFuzzyGroups(rows, 0, opt, toPinyin)
+  check('拼音比较能扩大召回', py.dropRows.length >= 2, `实际 ${py.dropRows.length}`)
+
+  // 落成清洗步骤后可以重放
+  const base = buildDataset('f.csv', '数据', parseCsv('姓名\n张三\n张 三\n张叁\n李四\n'))
+  const dropped = replay(base.rows, base.columns, [
+    {
+      kind: 'fuzzyDedupe',
+      colIndex: 0,
+      colName: '姓名',
+      threshold: 0.5,
+      dropRows: [1, 2],
+    },
+  ])
+  eq('重放后剩 2 行', dropped.rows.length, 2)
+  eq('保留的是第一条和无关的那条', dropped.origins, [0, 3])
 }
 
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)

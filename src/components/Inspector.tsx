@@ -28,6 +28,7 @@ interface Props {
   onUndo: () => void
   onRedo: () => void
   onOpenTemplates: () => void
+  onOpenFuzzy: () => void
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'warn' | 'bad' | 'good' }) {
@@ -88,6 +89,7 @@ export function Inspector({
   onUndo,
   onRedo,
   onOpenTemplates,
+  onOpenFuzzy,
 }: Props) {
   const [strategy, setStrategy] = useState<FillStrategy>('median')
   const stats = column.numeric
@@ -194,6 +196,9 @@ export function Inspector({
               onClick={() => onRun({ kind: 'dropDuplicates' })}
             >
               删除重复行
+            </button>
+            <button className="btn btn-ghost" disabled={busy} onClick={onOpenFuzzy}>
+              模糊去重…
             </button>
             {numericText ? (
               <button

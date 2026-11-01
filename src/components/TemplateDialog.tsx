@@ -81,6 +81,7 @@ export function TemplateDialog({
           </div>
           <p className="tpl-hint">
             模板只记录「怎么清洗」（按列名引用），不包含任何数据；套用时会替换该数据源现有的清洗步骤。
+            模糊去重依赖具体数据，不会被存进模板。
           </p>
 
           <div className="tpl-list">
