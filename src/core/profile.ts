@@ -21,6 +21,8 @@ const OUTLIER_Z = 3.5
 export interface RawSheet {
   name: string
   rows: CellValue[][]
+  /** 有公式但文件里没有缓存值的单元格数量（脚本生成的 xlsx 常见） */
+  formulaOnly?: number
 }
 
 interface Acc {
@@ -290,7 +292,7 @@ export function profileRows(
   sheet: string,
   headers: string[],
   rowsIn: CellValue[][],
-  opts: { source?: string; elapsedMs?: number; id?: string } = {},
+  opts: { source?: string; elapsedMs?: number; id?: string; formulaOnly?: number } = {},
 ): Dataset {
   const width = headers.length
   const rows = rowsIn
@@ -511,6 +513,12 @@ export function profileRows(
     notes.push('数据量较大，分位数/异常值基于蓄水池抽样估算')
   }
   if (anyWhitespace > 0) notes.push('检测到多余空格，可用「清理空格」一键处理')
+  const formulaOnly = opts.formulaOnly ?? 0
+  if (formulaOnly > 0) {
+    notes.push(
+      `这个工作表有 ${formulaOnly.toLocaleString()} 个单元格是公式，但文件里没有保存计算结果，读出来是空的 —— 用 Excel / WPS 打开后保存一次，再重新导入即可`,
+    )
+  }
 
   return {
     id: opts.id ?? makeId(),
@@ -529,6 +537,7 @@ export function profileRows(
       elapsedMs: opts.elapsedMs ?? 0,
       source: opts.source ?? '',
       notes,
+      formulaOnly,
     },
   }
 }
@@ -538,7 +547,7 @@ export function buildDataset(
   name: string,
   sheet: string,
   rawRows: CellValue[][],
-  opts: { source?: string; elapsedMs?: number } = {},
+  opts: { source?: string; elapsedMs?: number; formulaOnly?: number } = {},
 ): Dataset {
   const headerIdx = findHeaderRow(rawRows)
   const headerRow = rawRows[headerIdx] ?? []
@@ -567,6 +576,7 @@ export function rebuildDataset(
     id: prev.id,
     source: prev.meta.source,
     elapsedMs: opts.elapsedMs,
+    formulaOnly: prev.meta.formulaOnly,
   })
 }
 

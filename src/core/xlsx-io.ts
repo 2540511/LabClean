@@ -14,12 +14,32 @@ function normalizeCell(v: unknown): CellValue {
   return String(v)
 }
 
+/**
+ * 数一数「有公式、但没有缓存值」的单元格。
+ *
+ * Excel / WPS 保存时会把计算结果一起写进文件，读到的是值；
+ * 而脚本或库生成的 xlsx（openpyxl、很多 AI 生成的表）往往只写公式不写结果，
+ * 这种单元格 SheetJS 默认直接丢掉，必须开 sheetStubs 才能看见（t === 'z'）。
+ * 不提醒的话用户会以为「这批数据本来就是空的」。
+ */
+export function countFormulaOnly(ws: XLSX.WorkSheet): number {
+  let count = 0
+  for (const key of Object.keys(ws)) {
+    if (key.charCodeAt(0) === 33 /* '!' 开头的元数据 */) continue
+    const cell = (ws as unknown as Record<string, XLSX.CellObject | undefined>)[key]
+    if (cell && cell.t === 'z' && cell.f !== undefined) count++
+  }
+  return count
+}
+
 export function readWorkbook(buffer: ArrayBuffer): RawSheet[] {
   const wb = XLSX.read(new Uint8Array(buffer), {
     type: 'array',
     cellDates: true,
     cellNF: false,
     cellText: false,
+    // 保留「有格式/公式但没有值」的占位单元格，用来识别「公式没算」的工作表
+    sheetStubs: true,
   })
 
   return wb.SheetNames.map((name) => {
@@ -31,7 +51,7 @@ export function readWorkbook(buffer: ArrayBuffer): RawSheet[] {
       blankrows: false,
     })
     const rows: CellValue[][] = aoa.map((row) => (row ?? []).map(normalizeCell))
-    return { name, rows }
+    return { name, rows, formulaOnly: countFormulaOnly(ws) }
   }).filter((s) => s.rows.length > 0)
 }
 

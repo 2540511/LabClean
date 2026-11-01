@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { parseCsv } from '../src/core/csv'
 import { buildDataset, rebuildDataset } from '../src/core/profile'
 import { classify, coerceNumber, formatCell } from '../src/core/value'
-import { readWorkbook } from '../src/core/xlsx-io'
+import { countFormulaOnly, readWorkbook } from '../src/core/xlsx-io'
 import { handleRequest } from '../src/workers/table.worker'
 import * as XLSX from 'xlsx'
 import {
@@ -188,6 +188,30 @@ console.log('\n[8] Excel 读取往返')
   check('日期列识别为日期', dsx.columns[2].type === 'date', `实际 ${dsx.columns[2].type}`)
   eq('数字单元格按原文保留位数（超安全整数转字符串）', typeof dsx.rows[1][0], 'string')
   eq('字符串单元格原样保留', dsx.rows[2][0], '1234567890123456789')
+
+  // 只有公式、没有缓存值的工作表（openpyxl / 脚本生成的 xlsx 常见形态）。
+  // SheetJS 写文件时会丢掉没有值的公式单元格，所以这里直接喂一个工作表对象做单元测试。
+  const fakeWs = {
+    '!ref': 'A1:B3',
+    A1: { t: 's', v: '平均分' },
+    B1: { t: 's', v: '结果' },
+    A2: { t: 's', v: '语文' },
+    B2: { t: 'z', f: 'ROUND(AVERAGE(I2:I301),2)', v: 0 },
+    A3: { t: 's', v: '数学' },
+    B3: { t: 'n', f: 'MAX(J2:J301)', v: 99 },
+  } as unknown as XLSX.WorkSheet
+  eq('只数「有公式但没有结果」的占位单元格', countFormulaOnly(fakeWs), 1)
+  eq('普通工作表没有公式单元格', sheets[0].formulaOnly, 0)
+
+  const dsFormula = buildDataset('t.xlsx', '统计汇总', [['统计项', '结果'], ['语文', null]], {
+    formulaOnly: 1,
+  })
+  check(
+    '提示条说明了公式没有计算结果',
+    dsFormula.meta.notes.some((n) => n.includes('公式')),
+    dsFormula.meta.notes.join(' | '),
+  )
+  eq('公式数量记进了 meta', dsFormula.meta.formulaOnly, 1)
 }
 
 console.log('\n[9] Worker 解析链路（真实 xlsx 文件，5002 行）')

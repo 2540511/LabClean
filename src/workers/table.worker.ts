@@ -101,6 +101,7 @@ function handleParse(req: Extract<Request, { type: 'parse' }>): Response {
   const dataset = buildDataset(req.fileName, raw.name, raw.rows, {
     source: req.fileName,
     elapsedMs: performance.now() - started,
+    formulaOnly: raw.formulaOnly,
   })
 
   return { id: req.id, ok: true, sheets: infos, dataset, encoding }
@@ -116,6 +117,7 @@ function handleSheet(req: Extract<Request, { type: 'sheet' }>): Response {
   const dataset = buildDataset(req.fileName, raw.name, raw.rows, {
     source: req.fileName,
     elapsedMs: performance.now() - started,
+    formulaOnly: raw.formulaOnly,
   })
   return { id: req.id, ok: true, sheets: sheetInfos(sheets), dataset }
 }

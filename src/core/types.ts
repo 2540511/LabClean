@@ -68,6 +68,8 @@ export interface DatasetMeta {
   elapsedMs: number
   source: string
   notes: string[]
+  /** 公式单元格里没有保存计算结果的数量（导入后这些格子是空的） */
+  formulaOnly?: number
 }
 
 export interface Dataset {

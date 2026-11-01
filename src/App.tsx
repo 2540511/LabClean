@@ -637,6 +637,16 @@ export default function App() {
               </div>
             </div>
 
+            {dataset.meta.notes.length > 0 ? (
+              <div className="notes" role="status">
+                {dataset.meta.notes.map((note, i) => (
+                  <div className="note" key={i}>
+                    {note}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
             <DataTable
               dataset={dataset}
               selected={selected}
