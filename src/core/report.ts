@@ -124,3 +124,60 @@ export function previewText(ds: Dataset, colIndex: number, rowIndex: number): st
   if (!col) return ''
   return formatCell(ds.rows[rowIndex]?.[colIndex] ?? null, col.type)
 }
+
+export interface CompareItem {
+  label: string
+  dataset: Dataset
+  metrics: {
+    sheet: string
+    rows: number
+    cols: number
+    missingRate: number
+    duplicateRate: number
+    outlierRate: number
+    score: number
+    steps: number
+    removedRows: number
+  }
+}
+
+/** 多数据源导出：一张对比总表 + 每个数据源一张清洗后数据表 */
+export function buildCompareSheets(items: CompareItem[]): ExportSheet[] {
+  const total: (string | number | boolean | Date | null)[][] = [
+    ['数据源', '工作表', '行数', '列数', '缺失率', '重复率', '异常率', '质量分', '清洗步数', '删除行数'],
+  ]
+  for (const item of items) {
+    const m = item.metrics
+    total.push([
+      item.label,
+      m.sheet,
+      m.rows,
+      m.cols,
+      pct(m.missingRate),
+      pct(m.duplicateRate),
+      pct(m.outlierRate),
+      m.score,
+      m.steps,
+      m.removedRows,
+    ])
+  }
+
+  const sheets: ExportSheet[] = [{ name: '对比总表', aoa: total }]
+
+  for (const item of items.slice(0, 10)) {
+    const dataAoa: (string | number | boolean | Date | null)[][] = [
+      item.dataset.columns.map((c) => c.name),
+    ]
+    for (const row of item.dataset.rows) {
+      const out: (string | number | boolean | Date | null)[] = new Array(item.dataset.columns.length)
+      for (let c = 0; c < item.dataset.columns.length; c++) out[c] = toExportValue(row[c] ?? null)
+      dataAoa.push(out)
+    }
+    sheets.push({
+      name: item.label.replace(/[\\/?*[\]:]/g, ' ').slice(0, 24) || '数据',
+      aoa: dataAoa,
+    })
+  }
+
+  return sheets
+}

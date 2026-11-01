@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import type { Column, Dataset } from '../core/types'
 import { resolveFillValue, type FillStrategy } from '../core/clean'
-import type { OpSpec } from '../core/pipeline'
-import type { Step } from '../App'
+import type { OpSpec, StepRecord } from '../core/pipeline'
 import type { DatasetDiff } from '../lib/diff'
 import { cx, int, num, pct } from '../lib/format'
 
@@ -19,7 +18,7 @@ interface Props {
   dataset: Dataset
   baseline: Dataset | null
   column: Column
-  steps: Step[]
+  steps: StepRecord[]
   cursor: number
   diff: DatasetDiff | null
   busy: boolean

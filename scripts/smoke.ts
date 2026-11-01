@@ -18,6 +18,7 @@ import {
   resolveFillValue,
 } from '../src/core/clean'
 import { replay, type OpSpec } from '../src/core/pipeline'
+import { sourceMetrics, type DataSource } from '../src/core/compare'
 
 let passed = 0
 const failures: string[] = []
@@ -248,6 +249,52 @@ console.log('\n[10] 撤销 / 重做（从原始数据重放）')
   ])
   eq('空的城市被填上', filled.rows[3][1], '北京')
   eq('重放同样的步骤两次结果一致', replay(base.rows, base.columns, [step1, step2]).origins, afterTwo.origins)
+}
+
+console.log('\n[11] 多数据源对比')
+{
+  const mk = (name: string, ds: ReturnType<typeof buildDataset>): DataSource => ({
+    id: name,
+    fileId: name,
+    name,
+    sheet: ds.sheet,
+    sheetIndex: 0,
+    size: 0,
+    baseline: ds,
+    steps: [],
+    cursor: 0,
+  })
+  const dsA = buildDataset('a.csv', '数据', parseCsv('x,y\n1,2\n3,\n'))
+  const dsB = buildDataset('b.csv', '数据', parseCsv('x,y\n1,2\n3,4\n'))
+  const sa = mk('a', dsA)
+  const sb = mk('b', dsB)
+
+  const ma = sourceMetrics(sa)
+  const mb = sourceMetrics(sb)
+  check('缺失率能横向区分', ma.missingRate > mb.missingRate, `${ma.missingRate} vs ${mb.missingRate}`)
+  eq('行数取当前数据', ma.rows, 2)
+  check('质量分有差异', ma.score < mb.score, `${ma.score} vs ${mb.score}`)
+  check('迷你直方图有内容', ma.histogram.length > 0 && ma.histogram.some((v) => v > 0))
+
+  const cleaned: DataSource = {
+    ...sa,
+    id: 'a-cleaned',
+    steps: [
+      {
+        id: 's1',
+        at: Date.now(),
+        spec: { kind: 'fillMissing', colIndex: 1, colName: 'y', strategy: 'zero', value: 0 },
+        title: '填充',
+        detail: '',
+        affected: 1,
+      },
+    ],
+    cursor: 1,
+  }
+  const mc = sourceMetrics(cleaned)
+  eq('填充后缺失率归零', mc.missingRate, 0)
+  eq('清洗步数被记录', mc.steps, 1)
+  check('原始数据源指标不受影响', sourceMetrics(sa).missingRate > 0)
 }
 
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)

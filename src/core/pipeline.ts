@@ -32,6 +32,16 @@ export interface StepOutcome {
   detail: string
 }
 
+/** 一条已执行的清洗步骤，同时保存「怎么做的」和「给人看的说明」 */
+export interface StepRecord {
+  id: string
+  at: number
+  spec: OpSpec
+  title: string
+  detail: string
+  affected: number
+}
+
 export function opTitle(spec: OpSpec): string {
   switch (spec.kind) {
     case 'trim':

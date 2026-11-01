@@ -1,6 +1,8 @@
-import type { Dataset, SheetInfo } from '../core/types'
+import type { DataSource } from '../core/compare'
+import type { Dataset } from '../core/types'
 import { classifySeverity } from '../lib/analyze'
 import { cx, int, pct } from '../lib/format'
+import { SourceList } from './SourceList'
 
 const TYPE_SHORT: Record<string, string> = {
   number: '数值',
@@ -17,11 +19,14 @@ const DOT_COLOR = {
 
 interface Props {
   dataset: Dataset
-  sheets: SheetInfo[]
-  activeSheet: number
-  onSheet: (index: number) => void
+  sources: DataSource[]
+  activeId: string | null
+  busy: boolean
   selected: number
   onSelect: (index: number) => void
+  onSelectSource: (id: string) => void
+  onRemoveSource: (id: string) => void
+  onAddSource: () => void
 }
 
 function QualityRing({ score }: { score: number }) {
@@ -53,40 +58,39 @@ function QualityRing({ score }: { score: number }) {
   )
 }
 
-export function Rail({ dataset, sheets, activeSheet, onSheet, selected, onSelect }: Props) {
+export function Rail({
+  dataset,
+  sources,
+  activeId,
+  busy,
+  selected,
+  onSelect,
+  onSelectSource,
+  onRemoveSource,
+  onAddSource,
+}: Props) {
   const { meta } = dataset
   const totalOutliers = dataset.columns.reduce((a, c) => a + (c.numeric?.outliers ?? 0), 0)
   const problemCols = dataset.columns.filter((c) => c.issues.length > 0).length
 
   return (
     <aside className="rail">
-      <section className="panel">
-        <div className="panel-head">数据源</div>
-        <div className="panel-body">
-          <div className="ds-name" title={meta.source || dataset.name}>
-            {dataset.name}
-          </div>
-          <div className="ds-meta">
-            {dataset.sheet} · {int(meta.rowCount)} 行 × {meta.colCount} 列
-          </div>
-          {sheets.length > 1 ? (
-            <select
-              className="sheet-select"
-              value={activeSheet}
-              onChange={(e) => onSheet(Number(e.target.value))}
-            >
-              {sheets.map((s, i) => (
-                <option key={s.name + i} value={i}>
-                  {s.name}（{int(s.rowCount)} 行）
-                </option>
-              ))}
-            </select>
-          ) : null}
-        </div>
-      </section>
+      <SourceList
+        sources={sources}
+        activeId={activeId}
+        busy={busy}
+        onSelect={onSelectSource}
+        onRemove={onRemoveSource}
+        onAdd={onAddSource}
+      />
 
       <section className="panel">
-        <div className="panel-head">数据体检</div>
+        <div className="panel-head">
+          数据体检
+          <span className="panel-hint" title={dataset.name}>
+            {dataset.sheet}
+          </span>
+        </div>
         <div className="panel-body quality-row">
           <QualityRing score={meta.score} />
           <div className="quality-stats">

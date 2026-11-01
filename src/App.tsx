@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChartsDock } from './components/ChartsDock'
+import { CompareView } from './components/CompareView'
 import { DataTable } from './components/DataTable'
 import { EmptyState } from './components/EmptyState'
 import { Inspector } from './components/Inspector'
 import { Rail } from './components/Rail'
-import { buildDemoDataset } from './core/demo'
 import { resolveFillValue } from './core/clean'
-import { applySpec, opTitle, replay, type OpSpec } from './core/pipeline'
+import { resolveCurrent, sourceMetrics, type DataSource } from './core/compare'
+import { buildDemoDatasets } from './core/demo'
+import { applySpec, opTitle, replay, type OpSpec, type StepRecord } from './core/pipeline'
 import { rebuildDataset } from './core/profile'
-import { buildReportSheets } from './core/report'
-import type { Dataset, OpLogEntry, SheetInfo } from './core/types'
+import { buildCompareSheets, buildReportSheets } from './core/report'
+import type { Dataset } from './core/types'
 import { buildWorkbook, downloadBlob, workbookToBlob } from './core/xlsx-io'
 import { analyzeColumn } from './lib/analyze'
 import { computeDiff } from './lib/diff'
@@ -18,16 +20,9 @@ import { TableClient } from './lib/tableClient'
 
 const EMPTY_SET = new Set<number>()
 
-export interface Step {
-  id: string
-  at: number
-  spec: OpSpec
-  title: string
-  detail: string
-  affected: number
-}
+/** 单个文件最多导入几个工作表，避免一个几十表的工作簿把内存吃光 */
+const MAX_SHEETS_PER_FILE = 6
 
-/** 默认落到第一个有变化的数值列，打开页面就能看到图表，而不是看一列编号 */
 function defaultColumnIndex(ds: Dataset): number {
   const idx = ds.columns.findIndex((c) => c.type === 'number' && c.distinct > 1)
   return idx >= 0 ? idx : 0
@@ -37,22 +32,36 @@ function makeStepId(): string {
   return `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
 }
 
-export default function App() {
-  /** 原始数据：只解析一次，之后永不修改（算子都是写时复制） */
-  const [baseline, setBaseline] = useState<Dataset | null>(null)
-  /** 全部步骤，含被撤销掉的 */
-  const [steps, setSteps] = useState<Step[]>([])
-  /** 已应用的步数：撤销就是减一，重做就是加一 */
-  const [cursor, setCursor] = useState(0)
+function makeSource(
+  fileId: string,
+  meta: { name: string; size: number },
+  sheetIndex: number,
+  ds: Dataset,
+): DataSource {
+  return {
+    id: `${fileId}#${sheetIndex}`,
+    fileId,
+    name: meta.name,
+    sheet: ds.sheet,
+    sheetIndex,
+    size: meta.size,
+    baseline: ds,
+    steps: [],
+    cursor: 0,
+  }
+}
 
-  const [sheets, setSheets] = useState<SheetInfo[]>([])
-  const [activeSheet, setActiveSheet] = useState(0)
-  const [file, setFile] = useState<{ id: string; name: string; size: number } | null>(null)
-  const [encoding, setEncoding] = useState('')
+export default function App() {
+  const [sources, setSources] = useState<DataSource[]>([])
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [view, setView] = useState<'table' | 'compare'>(() =>
+    new URLSearchParams(window.location.search).get('view') === 'compare' ? 'compare' : 'table',
+  )
   const [selected, setSelected] = useState(0)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [encoding, setEncoding] = useState('')
 
   const clientRef = useRef<TableClient | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -65,67 +74,105 @@ export default function App() {
 
   useEffect(() => () => clientRef.current?.dispose(), [])
 
-  /** 派生状态：原始数据 + 重放前 cursor 步 = 当前数据 */
+  const active = useMemo(
+    () => sources.find((s) => s.id === activeId) ?? sources[0] ?? null,
+    [sources, activeId],
+  )
+
+  /** 原始数据 + 重放已应用的步骤 = 当前数据 */
   const pipeline = useMemo(() => {
-    if (!baseline) return null
-    const applied = steps.slice(0, cursor)
+    if (!active) return null
+    const applied = active.steps.slice(0, active.cursor)
     const out = replay(
-      baseline.rows,
-      baseline.columns,
+      active.baseline.rows,
+      active.baseline.columns,
       applied.map((s) => s.spec),
     )
-    const dataset = applied.length === 0 ? baseline : rebuildDataset(baseline, out.rows)
+    const dataset = applied.length === 0 ? active.baseline : rebuildDataset(active.baseline, out.rows)
     return { rows: out.rows, origins: out.origins, dataset }
-  }, [baseline, steps, cursor])
+  }, [active])
 
   const dataset = pipeline?.dataset ?? null
 
   const diff = useMemo(() => {
-    if (!baseline || !pipeline) return null
-    if (pipeline.dataset === baseline) return { changedCells: 0, changedByColumn: [], removedRows: 0 }
-    return computeDiff(baseline, pipeline.rows, pipeline.origins)
-  }, [baseline, pipeline])
+    if (!active || !pipeline) return null
+    if (pipeline.dataset === active.baseline) {
+      return { changedCells: 0, changedByColumn: [], removedRows: 0 }
+    }
+    return computeDiff(active.baseline, pipeline.rows, pipeline.origins)
+  }, [active, pipeline])
 
-  const appliedSteps = useMemo(() => steps.slice(0, cursor), [steps, cursor])
-  const logEntries: OpLogEntry[] = useMemo(
-    () =>
-      appliedSteps.map((s) => ({
-        id: s.id,
-        at: s.at,
-        title: s.title,
-        detail: s.detail,
-        affected: s.affected,
-      })),
-    [appliedSteps],
+  const patchActive = useCallback(
+    (patch: (s: DataSource) => Partial<DataSource>) => {
+      setSources((prev) => prev.map((s) => (s.id === activeId ? { ...s, ...patch(s) } : s)))
+    },
+    [activeId],
   )
 
-  const loadDataset = useCallback((ds: Dataset) => {
-    setBaseline(ds)
-    setSteps([])
-    setCursor(0)
-    setSelected(defaultColumnIndex(ds))
-  }, [])
+  /** 切到另一个数据源时，默认选中它第一个有变化的数值列 */
+  useEffect(() => {
+    if (active) setSelected(defaultColumnIndex(active.baseline))
+    // 只在切换数据源时重置
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.id])
 
-  const importFile = useCallback(
-    async (f: File) => {
+  // ---------- 导入 ----------
+  const importFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return
       setError(null)
-      setBusy('正在读取文件…')
+      const added: DataSource[] = []
       try {
-        const buffer = await f.arrayBuffer()
-        const id = `f_${Date.now().toString(36)}`
-        const res = await getClient().parse(id, f.name, buffer, (phase) => setBusy(phase))
-        loadDataset(res.dataset)
-        setSheets(res.sheets)
-        setActiveSheet(Math.max(0, res.sheets.findIndex((s) => s.name === res.dataset.sheet)))
-        setFile({ id, name: f.name, size: f.size })
-        setEncoding(res.encoding ?? '')
+        for (const f of files) {
+          setBusy(`正在读取 ${f.name}…`)
+          const buffer = await f.arrayBuffer()
+          const fileId = `f_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`
+          const res = await getClient().parse(fileId, f.name, buffer, (phase) =>
+            setBusy(`${f.name}：${phase}`),
+          )
+          setEncoding(res.encoding ?? '')
+
+          const primaryIndex = Math.max(
+            0,
+            res.sheets.findIndex((s) => s.name === res.dataset.sheet),
+          )
+          added.push(makeSource(fileId, f, primaryIndex, res.dataset))
+
+          // 其余工作表也作为独立数据源，方便横向对比
+          const others = res.sheets
+            .map((s, i) => ({ s, i }))
+            .filter((x) => x.i !== primaryIndex)
+            .slice(0, MAX_SHEETS_PER_FILE - 1)
+
+          for (const o of others) {
+            setBusy(`${f.name}：读取工作表「${o.s.name}」…`)
+            try {
+              const r = await getClient().loadSheet(fileId, f.name, o.i)
+              added.push(makeSource(fileId, f, o.i, r.dataset))
+            } catch {
+              // 单个工作表读失败不影响其它数据源
+            }
+          }
+        }
+
+        const key = (s: DataSource) => `${s.name}#${s.sheet}`
+        const seen = new Set(sources.map(key))
+        const fresh = added.filter((s) => !seen.has(key(s)))
+        if (fresh.length === 0) {
+          setBusy(null)
+          setError('这些数据源已经在列表里了')
+          return
+        }
+        setSources((prev) => [...prev, ...fresh])
+        setActiveId(fresh[0].id)
+        setView('table')
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
         setBusy(null)
       }
     },
-    [getClient, loadDataset],
+    [getClient, sources],
   )
 
   const onDrop = useCallback(
@@ -133,56 +180,23 @@ export default function App() {
       event.preventDefault()
       dragDepth.current = 0
       setDragging(false)
-      const f = event.dataTransfer.files?.[0]
-      if (f) void importFile(f)
+      const files = Array.from(event.dataTransfer.files ?? [])
+      if (files.length > 0) void importFiles(files)
     },
-    [importFile],
+    [importFiles],
   )
-
-  const switchSheet = useCallback(
-    async (index: number) => {
-      if (!file || busy) return
-      setBusy('正在切换工作表…')
-      try {
-        const res = await getClient().loadSheet(file.id, file.name, index)
-        loadDataset(res.dataset)
-        setSheets(res.sheets)
-        setActiveSheet(index)
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
-      } finally {
-        setBusy(null)
-      }
-    },
-    [busy, file, getClient, loadDataset],
-  )
-
-  const reloadSource = useCallback(async () => {
-    if (!file || busy) return
-    if (file.id === 'demo') {
-      loadDataset(buildDemoDataset())
-      return
-    }
-    setBusy('正在重新读取原文件…')
-    try {
-      const res = await getClient().loadSheet(file.id, file.name, activeSheet)
-      loadDataset(res.dataset)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(null)
-    }
-  }, [activeSheet, busy, file, getClient, loadDataset])
 
   const loadDemo = useCallback(() => {
-    const demo = buildDemoDataset()
+    const demos = buildDemoDatasets()
+    const newSources = demos.map((d, i) => makeSource(`demo${i}`, { name: d.name, size: 0 }, 0, d))
     setError(null)
-    loadDataset(demo)
-    setSheets([{ name: demo.sheet, rowCount: demo.meta.rowCount, colCount: demo.meta.colCount }])
-    setActiveSheet(0)
-    setFile({ id: 'demo', name: demo.name, size: 0 })
     setEncoding('')
-  }, [loadDataset])
+    setSources((prev) => {
+      const existing = new Set(prev.map((s) => s.id))
+      return [...prev, ...newSources.filter((s) => !existing.has(s.id))]
+    })
+    setActiveId(newSources[0].id)
+  }, [])
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('demo') === '1') loadDemo()
@@ -190,12 +204,44 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  /** 执行一步清洗：截断撤销历史后追加 */
+  const reloadSource = useCallback(async () => {
+    if (!active || busy) return
+    // 示例数据在内存里，直接清空步骤即可
+    if (active.fileId.startsWith('demo')) {
+      setSources((prev) =>
+        prev.map((s) => (s.id === active.id ? { ...s, steps: [], cursor: 0 } : s)),
+      )
+      return
+    }
+    setBusy('正在重新读取原文件…')
+    try {
+      const res = await getClient().loadSheet(active.fileId, active.name, active.sheetIndex)
+      setSources((prev) =>
+        prev.map((s) => (s.id === active.id ? { ...s, baseline: res.dataset, steps: [], cursor: 0 } : s)),
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
+    }
+  }, [active, busy, getClient, loadDemo])
+
+  const removeSource = useCallback(
+    (id: string) => {
+      const next = sources.filter((s) => s.id !== id)
+      setSources(next)
+      if (activeId === id) setActiveId(next[0]?.id ?? null)
+      if (next.length === 0) setView('table')
+    },
+    [activeId, sources],
+  )
+
+  // ---------- 清洗 ----------
   const runOp = useCallback(
     (spec: OpSpec) => {
-      if (!pipeline || !baseline) return
+      if (!active || !pipeline) return
       const out = applySpec(pipeline.rows, pipeline.origins, pipeline.dataset.columns, spec)
-      const step: Step = {
+      const step: StepRecord = {
         id: makeStepId(),
         at: Date.now(),
         spec,
@@ -203,24 +249,19 @@ export default function App() {
         detail: out.detail,
         affected: out.affected,
       }
-      setSteps((prev) => [...prev.slice(0, cursor), step])
-      setCursor(cursor + 1)
+      patchActive((s) => ({ steps: [...s.steps.slice(0, s.cursor), step], cursor: s.cursor + 1 }))
     },
-    [baseline, cursor, pipeline],
+    [active, patchActive, pipeline],
   )
 
-  const undo = useCallback(() => setCursor((c) => Math.max(0, c - 1)), [])
-  const redo = useCallback(() => setCursor((c) => Math.min(steps.length, c + 1)), [steps.length])
-
-  /** 一次性跑多步（演示模式用）：在纯数据上顺序推演，避免依赖 React 状态的时序 */
   const runSequence = useCallback(
     (specs: OpSpec[]) => {
-      if (!baseline) return
-      let rows = baseline.rows
-      let origins = baseline.rows.map((_, i) => i)
-      const built: Step[] = []
+      if (!active) return
+      let rows = active.baseline.rows
+      let origins = active.baseline.rows.map((_, i) => i)
+      const built: StepRecord[] = []
       for (const spec of specs) {
-        const out = applySpec(rows, origins, baseline.columns, spec)
+        const out = applySpec(rows, origins, active.baseline.columns, spec)
         built.push({
           id: makeStepId(),
           at: Date.now(),
@@ -232,18 +273,17 @@ export default function App() {
         rows = out.rows
         origins = out.origins
       }
-      setSteps(built)
-      setCursor(built.length)
+      patchActive(() => ({ steps: built, cursor: built.length }))
     },
-    [baseline],
+    [active, patchActive],
   )
 
-  /** ?demo=1&auto=1：自动演示一遍清洗流程，用于比赛演示和自检 */
+  /** ?auto=1：自动演示一遍清洗流程（比赛演示 + 自检） */
   useEffect(() => {
-    if (!baseline || steps.length > 0) return
+    if (!active || active.steps.length > 0) return
     if (new URLSearchParams(window.location.search).get('auto') !== '1') return
-    const idx = baseline.columns.findIndex((c) => c.type === 'number' && c.missing > 0)
-    const col = baseline.columns[idx >= 0 ? idx : 1]
+    const idx = active.baseline.columns.findIndex((c) => c.type === 'number' && c.missing > 0)
+    const col = active.baseline.columns[idx >= 0 ? idx : 1]
     const specs: OpSpec[] = [{ kind: 'trim' }]
     if (col) {
       specs.push({
@@ -256,7 +296,16 @@ export default function App() {
     }
     specs.push({ kind: 'dropDuplicates' })
     runSequence(specs)
-  }, [baseline, runSequence, steps.length])
+  }, [active, runSequence])
+
+  const undo = useCallback(
+    () => patchActive((s) => ({ cursor: Math.max(0, s.cursor - 1) })),
+    [patchActive],
+  )
+  const redo = useCallback(
+    () => patchActive((s) => ({ cursor: Math.min(s.steps.length, s.cursor + 1) })),
+    [patchActive],
+  )
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -277,7 +326,19 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [redo, undo])
 
-  const exportExcel = useCallback(() => {
+  // ---------- 导出 ----------
+  const logEntries = useMemo(() => {
+    const applied = active ? active.steps.slice(0, active.cursor) : []
+    return applied.map((s) => ({
+      id: s.id,
+      at: s.at,
+      title: s.title,
+      detail: s.detail,
+      affected: s.affected,
+    }))
+  }, [active])
+
+  const exportActive = useCallback(() => {
     if (!dataset) return
     if (dataset.meta.rowCount > 300_000) {
       const ok = window.confirm(
@@ -289,9 +350,8 @@ export default function App() {
     window.setTimeout(() => {
       try {
         const wb = buildWorkbook(buildReportSheets(dataset, logEntries))
-        const blob = workbookToBlob(wb)
         const base = (dataset.name || '数据').replace(/\.[^.]+$/, '')
-        downloadBlob(blob, `${base}_清洗结果_${nowStamp()}.xlsx`)
+        downloadBlob(workbookToBlob(wb), `${base}_清洗结果_${nowStamp()}.xlsx`)
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -300,6 +360,26 @@ export default function App() {
     }, 40)
   }, [dataset, logEntries])
 
+  const exportAll = useCallback(() => {
+    if (sources.length === 0) return
+    setBusy('正在生成对比报告…')
+    window.setTimeout(() => {
+      try {
+        const items = sources.map((s) => ({
+          label: `${s.name.replace(/\.[^.]+$/, '')}${s.sheet ? `_${s.sheet}` : ''}`,
+          dataset: resolveCurrent(s),
+          metrics: sourceMetrics(s),
+        }))
+        downloadBlob(workbookToBlob(buildWorkbook(buildCompareSheets(items))), `数据对比_${nowStamp()}.xlsx`)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setBusy(null)
+      }
+    }, 40)
+  }, [sources])
+
+  // ---------- 派生显示值 ----------
   const analysis = useMemo(() => {
     if (!dataset) return null
     const col = dataset.columns[selected]
@@ -308,13 +388,14 @@ export default function App() {
   }, [dataset, selected])
 
   const compareSource = useMemo(() => {
-    if (!baseline || !pipeline || baseline === pipeline.dataset) return null
-    return { rows: baseline.rows, origins: pipeline.origins }
-  }, [baseline, pipeline])
+    if (!active || !pipeline || active.baseline === pipeline.dataset) return null
+    return { rows: active.baseline.rows, origins: pipeline.origins }
+  }, [active, pipeline])
 
   const currentColumn = dataset?.columns[selected]
-  const canUndo = cursor > 0
-  const canRedo = cursor < steps.length
+  const canUndo = !!active && active.cursor > 0
+  const canRedo = !!active && active.cursor < active.steps.length
+  const sourceName = active ? `${active.name}${sources.length > 1 ? ` · ${active.sheet}` : ''}` : ''
 
   return (
     <div
@@ -343,10 +424,30 @@ export default function App() {
           </div>
         </div>
 
-        {file ? (
-          <div className="file-chip" title={file.name}>
-            <span className="file-name">{file.name}</span>
-            <span className="file-size">{bytes(file.size)}</span>
+        {sources.length > 0 ? (
+          <div className="view-switch" role="tablist">
+            <button
+              role="tab"
+              className={view === 'table' ? 'vs-btn is-active' : 'vs-btn'}
+              onClick={() => setView('table')}
+            >
+              单表清洗
+            </button>
+            <button
+              role="tab"
+              className={view === 'compare' ? 'vs-btn is-active' : 'vs-btn'}
+              onClick={() => setView('compare')}
+            >
+              数据对比
+              {sources.length > 1 ? <span className="vs-count">{sources.length}</span> : null}
+            </button>
+          </div>
+        ) : null}
+
+        {active ? (
+          <div className="file-chip" title={sourceName}>
+            <span className="file-name">{sourceName}</span>
+            {active.size > 0 ? <span className="file-size">{bytes(active.size)}</span> : null}
           </div>
         ) : (
           <div className="offline-badge">
@@ -361,10 +462,11 @@ export default function App() {
           ref={inputRef}
           type="file"
           accept=".xlsx,.xls,.csv,.tsv,.txt"
+          multiple
           hidden
           onChange={(e) => {
-            const f = e.target.files?.[0]
-            if (f) void importFile(f)
+            const files = Array.from(e.target.files ?? [])
+            if (files.length > 0) void importFiles(files)
             e.target.value = ''
           }}
         />
@@ -372,7 +474,7 @@ export default function App() {
           导入文件
         </button>
 
-        {dataset ? (
+        {active && view === 'table' ? (
           <>
             <div className="history-group">
               <button
@@ -392,28 +494,49 @@ export default function App() {
                 ↷ 重做
               </button>
               <span className="history-count">
-                {cursor}/{steps.length}
+                {active.cursor}/{active.steps.length}
               </span>
             </div>
             <button className="btn" onClick={() => void reloadSource()} disabled={!!busy}>
               还原
             </button>
-            <button className="btn btn-primary" onClick={exportExcel} disabled={!!busy}>
-              导出 Excel
-            </button>
           </>
+        ) : null}
+
+        {sources.length > 1 ? (
+          <button className="btn" onClick={exportAll} disabled={!!busy}>
+            导出全部
+          </button>
+        ) : null}
+        {active ? (
+          <button className="btn btn-primary" onClick={exportActive} disabled={!!busy}>
+            导出 Excel
+          </button>
         ) : null}
       </header>
 
-      {dataset && currentColumn && pipeline ? (
+      {view === 'compare' && sources.length > 0 ? (
+        <CompareView
+          sources={sources}
+          activeId={active?.id ?? null}
+          onPick={(id) => {
+            setActiveId(id)
+            setView('table')
+          }}
+          onAdd={() => inputRef.current?.click()}
+        />
+      ) : dataset && currentColumn && active && pipeline ? (
         <div className="body">
           <Rail
             dataset={dataset}
-            sheets={sheets}
-            activeSheet={activeSheet}
-            onSheet={(i) => void switchSheet(i)}
+            sources={sources}
+            activeId={active.id}
+            busy={!!busy}
             selected={selected}
             onSelect={setSelected}
+            onSelectSource={setActiveId}
+            onRemoveSource={removeSource}
+            onAddSource={() => inputRef.current?.click()}
           />
 
           <main className="main">
@@ -436,7 +559,7 @@ export default function App() {
               </div>
               <div className="kpi">
                 <span>已清洗</span>
-                <b>{cursor > 0 ? `${cursor} 步` : '未清洗'}</b>
+                <b>{active.cursor > 0 ? `${active.cursor} 步` : '未清洗'}</b>
               </div>
             </div>
 
@@ -453,10 +576,10 @@ export default function App() {
 
           <Inspector
             dataset={dataset}
-            baseline={baseline}
+            baseline={active.baseline}
             column={currentColumn}
-            steps={steps}
-            cursor={cursor}
+            steps={active.steps}
+            cursor={active.cursor}
             diff={diff}
             busy={!!busy}
             canUndo={canUndo}
@@ -474,11 +597,12 @@ export default function App() {
         <span className={busy ? 'status-busy' : 'status-idle'}>
           {busy ?? (dataset ? '就绪' : '等待导入数据')}
         </span>
-        {dataset ? (
+        {sources.length > 0 ? (
           <>
             <span className="sep" />
             <span>
-              {dataset.name} · {dataset.sheet}
+              {sources.length} 个数据源
+              {active ? ` · 当前 ${active.name} · ${active.sheet}` : ''}
             </span>
             {encoding ? (
               <>
@@ -492,16 +616,14 @@ export default function App() {
                 <span className="tone-changed">已改动 {diff.changedCells.toLocaleString()} 个单元格</span>
               </>
             ) : null}
-            {dataset.meta.notes.length > 0 ? (
-              <>
-                <span className="sep" />
-                <span className="tone-warn">{dataset.meta.notes.join('；')}</span>
-              </>
-            ) : null}
           </>
         ) : null}
         <span className="statusbar-spacer" />
-        {cursor > 0 ? <span>已执行 {cursor} 步清洗 · Ctrl+Z 撤销</span> : <span>未做清洗</span>}
+        {active && active.cursor > 0 ? (
+          <span>已执行 {active.cursor} 步清洗 · Ctrl+Z 撤销</span>
+        ) : (
+          <span>未做清洗</span>
+        )}
       </footer>
 
       {error ? (
@@ -520,7 +642,7 @@ export default function App() {
         <div className="drop-overlay">
           <div className="drop-box">
             <strong>松手即导入</strong>
-            <span>支持 .xlsx / .xls / .csv</span>
+            <span>支持多选 / 多个文件 / 多个工作表</span>
           </div>
         </div>
       ) : null}

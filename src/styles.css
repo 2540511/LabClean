@@ -1174,3 +1174,294 @@ select {
   background: #34d399;
 }
 
+/* ---------- 视图切换 ---------- */
+.view-switch {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: #f1f5f9;
+  border-radius: 8px;
+  flex: none;
+}
+.vs-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.vs-btn:hover {
+  color: var(--ink-2);
+}
+.vs-btn.is-active {
+  background: #fff;
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+.vs-count {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 20px;
+  font-size: 10px;
+  padding: 0 5px;
+  font-weight: 500;
+}
+
+/* ---------- 数据源列表 ---------- */
+.panel-sources {
+  max-height: 244px;
+}
+.source-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+  min-height: 0;
+}
+.source-item {
+  padding: 6px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.source-item:hover {
+  background: #f8fafc;
+}
+.source-item.is-active {
+  background: var(--accent-weak);
+  border-color: #dbeafe;
+}
+.source-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.source-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-item.is-active .source-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+.source-del {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 4px;
+}
+.source-del:hover {
+  color: var(--danger);
+  background: #fef2f2;
+}
+.source-sub {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.source-badge {
+  background: #e0e7ff;
+  color: #4338ca;
+  border-radius: 20px;
+  padding: 0 5px;
+  font-size: 9.5px;
+}
+.source-add {
+  flex: none;
+  margin: 0 8px 8px;
+  height: 26px;
+  font-size: 11.5px;
+  color: var(--accent);
+  border-style: dashed;
+}
+
+/* ---------- 对比视图 ---------- */
+.compare-view {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.compare-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.compare-head h2 {
+  margin: 0;
+  font-size: 17px;
+  letter-spacing: -0.2px;
+}
+.compare-head p {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.compare-actions {
+  display: flex;
+  gap: 8px;
+}
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+.compare-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  cursor: pointer;
+  transition: box-shadow 0.12s, border-color 0.12s;
+}
+.compare-card:hover {
+  border-color: #bfdbfe;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.08);
+}
+.compare-card.is-active {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  border-color: var(--accent);
+}
+.cc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cc-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-score {
+  flex: none;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid;
+  border-radius: 20px;
+  padding: 1px 8px;
+  font-variant-numeric: tabular-nums;
+}
+.cc-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.cc-hist-wrap {
+  margin-top: 10px;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.mini-hist {
+  flex: 1;
+  height: 34px;
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+}
+.mini-hist i {
+  flex: 1;
+  background: #bfdbfe;
+  border-radius: 1px 1px 0 0;
+  min-height: 1px;
+}
+.cc-hist-label {
+  flex: none;
+  max-width: 62px;
+  font-size: 9.5px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-bars {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mini-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+}
+.mini-label {
+  flex: none;
+  width: 22px;
+  color: var(--muted);
+}
+.mini-track {
+  flex: 1;
+  height: 6px;
+  background: #f1f5f9;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.mini-track i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+.mini-value {
+  flex: none;
+  width: 46px;
+  text-align: right;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.cc-foot {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line-soft);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.compare-chart-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 264px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.compare-chart-card .chart-card-body {
+  height: 236px;
+  flex: none;
+}
+.compare-tip {
+  padding-bottom: 6px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+
