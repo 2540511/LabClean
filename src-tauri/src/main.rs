@@ -37,13 +37,52 @@ fn log_line(line: &str) {
     }
 }
 
+/// WebView2 默认把用户数据目录建在 %LOCALAPPDATA%，某些机器/权限设置下会「拒绝访问」，
+/// 整个窗口就起不来。改成优先放在 exe 旁边：既绕开权限问题，也让程序真正做到「拷走就能用」。
+fn pick_webview_data_dir() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("labclean-data"));
+        }
+    }
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(local).join("LabClean").join("data"));
+    }
+    if let Some(tmp) = std::env::var_os("TEMP") {
+        candidates.push(PathBuf::from(tmp).join("LabClean-data"));
+    }
+    for dir in candidates {
+        if std::fs::create_dir_all(&dir).is_ok() {
+            return Some(dir);
+        }
+        log_line(&format!("数据目录不可写: {dir:?}"));
+    }
+    None
+}
+
 fn main() {
+    // 窗口程序没有控制台，panic 原文会彻底丢失。先挂钩子，把它写进日志。
+    std::panic::set_hook(Box::new(|info| {
+        log_line(&format!("!!! PANIC: {info}"));
+    }));
+
     log_line("=== LabClean 启动 ===");
     log_line(&format!(
         "exe={:?} version={}",
         std::env::current_exe(),
         env!("CARGO_PKG_VERSION")
     ));
+
+    if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_none() {
+        match pick_webview_data_dir() {
+            Some(dir) => {
+                log_line(&format!("WebView2 数据目录: {dir:?}"));
+                std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &dir);
+            }
+            None => log_line("警告: 找不到可写的数据目录，将使用系统默认位置"),
+        }
+    }
 
     // 部分环境（新系统 / 杀软挂钩 / 虚拟机显卡）下 WebView2 初始化会卡死。
     // 这两个参数是社区验证过的绕过方式，允许用户自己覆盖。

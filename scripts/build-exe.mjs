@@ -91,9 +91,30 @@ const started = Date.now()
 const res = spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit', env })
 const secs = ((Date.now() - started) / 1000).toFixed(0)
 
+/**
+ * 关键修复：项目目录如果带「低完整性级别」标记（DSH 等工作区常见），
+ * 编译出来的 exe 会继承这个标记，运行时是低权限进程 —— 写不了 WebView2 的数据目录，
+ * 表现就是「双击没反应 / 白屏」，日志里是 os error 5。
+ * 这里在构建完成后把产物改回正常的 Medium。
+ */
+function fixIntegrity(target) {
+  if (!existsSync(target)) return
+  const r = spawnSync('icacls', [target, '/setintegritylevel', 'Medium'], {
+    stdio: 'ignore',
+    windowsHide: true,
+  })
+  if (r.status === 0) console.log(`完整性级别已修正为 Medium: ${target}`)
+}
+
 if (res.status === 0) {
+  const exePath = join(root, 'src-tauri', 'target', 'release', 'labclean.exe')
+  fixIntegrity(exePath)
+  // release 目录本身也设成 Medium，之后复制进去的文件才会继承正确级别
+  fixIntegrity(join(root, 'release'))
+  const copied = join(root, 'release', 'LabClean.exe')
+  if (existsSync(copied)) fixIntegrity(copied)
   console.log(`\n构建完成（${secs}s）`)
-  console.log(`免安装 exe: ${join(root, 'src-tauri', 'target', 'release', 'labclean.exe')}`)
+  console.log(`免安装 exe: ${exePath}`)
 } else {
   console.error(`构建失败（退出码 ${res.status}）`)
 }
