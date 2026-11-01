@@ -74,6 +74,8 @@ export default function App() {
   const [selected, setSelected] = useState(0)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /** 最近一次导出的文件：浏览器拦截自动下载时，用户可以点这个链接自己另存 */
+  const [saved, setSaved] = useState<{ url: string; name: string } | null>(null)
   const [dragging, setDragging] = useState(false)
   const [encoding, setEncoding] = useState('')
   const [templates, setTemplates] = useState<CleanTemplate[]>(() => [
@@ -437,7 +439,8 @@ export default function App() {
       try {
         const wb = buildWorkbook(buildReportSheets(dataset, logEntries))
         const base = (dataset.name || '数据').replace(/\.[^.]+$/, '')
-        downloadBlob(workbookToBlob(wb), `${base}_清洗结果_${nowStamp()}.xlsx`)
+        const name = `${base}_清洗结果_${nowStamp()}.xlsx`
+        setSaved({ url: downloadBlob(workbookToBlob(wb), name), name })
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -463,7 +466,8 @@ export default function App() {
             affected: step.affected,
           })),
         }))
-        downloadBlob(workbookToBlob(buildWorkbook(buildCompareSheets(items))), `数据对比_${nowStamp()}.xlsx`)
+        const name = `数据对比_${nowStamp()}.xlsx`
+        setSaved({ url: downloadBlob(workbookToBlob(buildWorkbook(buildCompareSheets(items))), name), name })
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -767,6 +771,21 @@ export default function App() {
         onApply={applyTemplate}
         onDelete={deleteTemplate}
       />
+
+      {saved ? (
+        <div className="save-bar" role="status">
+          <div>
+            <strong>已生成 {saved.name}</strong>
+            <p>如果浏览器没有自动开始下载（或被拦截），点右边按钮手动保存</p>
+          </div>
+          <a className="btn btn-small btn-primary" href={saved.url} download={saved.name}>
+            手动保存
+          </a>
+          <button className="btn btn-small" onClick={() => setSaved(null)}>
+            关闭
+          </button>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="toast toast-error" role="alert">

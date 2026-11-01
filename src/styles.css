@@ -1043,6 +1043,34 @@ select {
   border-radius: 12px;
   box-shadow: 0 14px 36px rgba(15, 23, 42, 0.16);
 }
+
+/* 导出成功后的兜底提示：浏览器拦截自动下载时，用户可手动保存 */
+.save-bar {
+  position: fixed;
+  right: 20px;
+  bottom: 44px;
+  z-index: 49;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  max-width: 520px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--ok);
+  border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.16);
+}
+.save-bar strong {
+  display: block;
+  font-size: 12px;
+}
+.save-bar p {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
 .toast-error {
   border-left: 4px solid var(--danger);
 }

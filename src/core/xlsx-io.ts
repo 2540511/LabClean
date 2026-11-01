@@ -104,14 +104,38 @@ export function workbookToBlob(wb: XLSX.WorkBook): Blob {
   })
 }
 
-export function downloadBlob(blob: Blob, filename: string): void {
+/**
+ * 触发浏览器下载。
+ *
+ * 两个坑：
+ * 1. `<a>` 点击后**不能立刻移除** —— 部分 Chromium 会把正在进行的 blob 下载取消掉；
+ * 2. object URL 也不能 early revoke，大文件（几十 MB、上万行）还没写完就被吊销会失败。
+ * 所以这里保留 10s 再移除、60s 再释放，并返回 URL 供上层做「手动保存」兜底入口。
+ */
+export function downloadBlob(blob: Blob, filename: string): string {
   const url = URL.createObjectURL(blob)
+
+  // 老 Edge / IE 的专用接口，存在就直接用
+  const legacy = (navigator as unknown as { msSaveOrOpenBlob?: (b: Blob, n: string) => void })
+    .msSaveOrOpenBlob
+  if (typeof legacy === 'function') {
+    try {
+      legacy.call(navigator, blob, filename)
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      return url
+    } catch {
+      // 落到标准路径
+    }
+  }
+
   const a = document.createElement('a')
   a.href = url
   a.download = filename
-  a.rel = 'noopener'
+  a.style.display = 'none'
   document.body.appendChild(a)
   a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 4000)
+
+  window.setTimeout(() => a.remove(), 10_000)
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  return url
 }
