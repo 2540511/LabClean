@@ -443,6 +443,13 @@ export default function App() {
           label: `${s.name.replace(/\.[^.]+$/, '')}${s.sheet ? `_${s.sheet}` : ''}`,
           dataset: resolveCurrent(s),
           metrics: sourceMetrics(s),
+          logs: s.steps.slice(0, s.cursor).map((step) => ({
+            id: step.id,
+            at: step.at,
+            title: step.title,
+            detail: step.detail,
+            affected: step.affected,
+          })),
         }))
         downloadBlob(workbookToBlob(buildWorkbook(buildCompareSheets(items))), `数据对比_${nowStamp()}.xlsx`)
       } catch (e) {

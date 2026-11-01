@@ -18,6 +18,7 @@ import {
   resolveFillValue,
 } from '../src/core/clean'
 import { replay, type OpSpec } from '../src/core/pipeline'
+import { buildCompareSheets, buildReportSheets } from '../src/core/report'
 import { sourceMetrics, type DataSource } from '../src/core/compare'
 import {
   DEFAULT_FUZZY,
@@ -334,6 +335,38 @@ console.log('\n[11] 多数据源对比')
   eq('填充后缺失率归零', mc.missingRate, 0)
   eq('清洗步数被记录', mc.steps, 1)
   check('原始数据源指标不受影响', sourceMetrics(sa).missingRate > 0)
+
+  // 多数据源报告要带上每个源的清洗日志
+  const cmp = buildCompareSheets([
+    {
+      label: 'a',
+      dataset: dsA,
+      metrics: ma,
+      logs: [{ id: 's1', at: Date.now(), title: '填充缺失（填 0）', affected: 1, detail: '「y」填充了 1 个空单元格 → 0' }],
+    },
+    { label: 'b', dataset: dsB, metrics: mb, logs: [] },
+  ])
+  check('多源报告包含操作日志表', cmp.some((s) => s.name === '操作日志'), cmp.map((s) => s.name).join(' / '))
+  const cmpLog = cmp.find((s) => s.name === '操作日志')!
+  eq('日志表有表头 + 1 条记录', cmpLog.aoa.length, 2)
+  eq('日志行第一列是数据源名', cmpLog.aoa[1][0], 'a')
+  eq('日志行带操作标题', cmpLog.aoa[1][2], '填充缺失（填 0）')
+
+  const cmpEmpty = buildCompareSheets([{ label: 'b', dataset: dsB, metrics: mb, logs: [] }])
+  const emptyLog = cmpEmpty.find((s) => s.name === '操作日志')!
+  eq('没做清洗时日志表也有一行说明', emptyLog.aoa.length, 2)
+  eq('说明文案', emptyLog.aoa[1][2], '未做清洗')
+
+  // 单表报告的「操作日志」：时间 / 操作 / 影响数量 / 说明
+  const rep = buildReportSheets(dsA, [
+    { id: 's1', at: Date.now(), title: '删除重复行', affected: 23, detail: '删除了 23 行完全重复的数据' },
+  ])
+  const repLog = rep.find((s) => s.name === '操作日志')!
+  eq('单表报告含操作日志表', repLog.aoa.length, 2)
+  eq('日志表头', repLog.aoa[0].join('|'), '时间|操作|影响数量|说明')
+  eq('日志记录操作名', repLog.aoa[1][1], '删除重复行')
+  eq('日志记录影响数量', repLog.aoa[1][2], 23)
+  eq('日志记录明细', repLog.aoa[1][3], '删除了 23 行完全重复的数据')
 }
 
 console.log('\n[12] 清洗模板（按列名套用到别的表）')

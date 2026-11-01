@@ -128,6 +128,8 @@ export function previewText(ds: Dataset, colIndex: number, rowIndex: number): st
 export interface CompareItem {
   label: string
   dataset: Dataset
+  /** 这个数据源已经应用的清洗步骤，导出时合并成一张「操作日志」 */
+  logs?: OpLogEntry[]
   metrics: {
     sheet: string
     rows: number
@@ -178,6 +180,22 @@ export function buildCompareSheets(items: CompareItem[]): ExportSheet[] {
       aoa: dataAoa,
     })
   }
+
+  // 每个数据源的清洗步骤合并成一张日志，报告里能看清「哪张表、哪一步、改了多少」
+  const logAoa: (string | number | boolean | Date | null)[][] = [
+    ['数据源', '时间', '操作', '影响数量', '说明'],
+  ]
+  let logRows = 0
+  for (const item of items) {
+    for (const log of item.logs ?? []) {
+      logAoa.push([item.label, timeText(log.at), log.title, log.affected, log.detail])
+      logRows++
+    }
+  }
+  if (logRows === 0) {
+    logAoa.push(['—', '—', '未做清洗', 0, '所有数据源都按原始状态导出'])
+  }
+  sheets.push({ name: '操作日志', aoa: logAoa })
 
   return sheets
 }
