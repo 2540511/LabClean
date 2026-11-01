@@ -2,8 +2,68 @@
 // 关掉调试控制台窗口，双击运行时不弹黑框。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::io::Write;
+use std::path::PathBuf;
+
+/// 启动黑匣子：把关键事件写进日志，桌面版白屏时这是唯一线索。
+fn log_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(dir) = std::env::var_os("TEMP") {
+        paths.push(PathBuf::from(dir).join("labclean-boot.log"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            paths.push(dir.join("labclean-boot.log"));
+        }
+    }
+    paths
+}
+
+fn log_line(line: &str) {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let msg = format!("[{stamp}] {line}\n");
+    for path in log_paths() {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = f.write_all(msg.as_bytes());
+        }
+    }
+}
+
 fn main() {
-    tauri::Builder::default()
-        .run(tauri::generate_context!())
-        .expect("启动 LabClean 失败");
+    log_line("=== LabClean 启动 ===");
+    log_line(&format!(
+        "exe={:?} version={}",
+        std::env::current_exe(),
+        env!("CARGO_PKG_VERSION")
+    ));
+
+    let result = tauri::Builder::default()
+        .setup(|_app| {
+            log_line("setup: 应用初始化完成");
+            Ok(())
+        })
+        .on_page_load(|_webview, payload| {
+            log_line(&format!("page_load: {:?} {}", payload.event(), payload.url()));
+        })
+        .build(tauri::generate_context!())
+        .map(|app| {
+            log_line("窗口已创建，进入事件循环");
+            app.run(|_app, event| {
+                if let tauri::RunEvent::Exit = event {
+                    log_line("退出");
+                }
+            });
+        });
+
+    if let Err(err) = result {
+        log_line(&format!("启动失败: {err}"));
+        panic!("启动 LabClean 失败: {err}");
+    }
 }

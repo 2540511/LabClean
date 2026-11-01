@@ -9,5 +9,33 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <!-- 兜底：如果 6 秒后界面还是空的（脚本 404 / 被拦 / 崩溃），把线索直接打在页面上 -->
+    <script>
+      window.addEventListener('load', function () {
+        setTimeout(function () {
+          var root = document.getElementById('root')
+          if (!root || root.childElementCount > 0) return
+          var scripts = Array.prototype.map
+            .call(document.scripts, function (s) {
+              return s.src
+            })
+            .filter(Boolean)
+          var styles = Array.prototype.map.call(
+            document.querySelectorAll('link[rel=stylesheet]'),
+            function (l) {
+              return l.href
+            },
+          )
+          root.innerHTML =
+            '<pre style="padding:26px;font:13px/1.7 ui-monospace,Consolas,monospace;color:#b91c1c;white-space:pre-wrap">' +
+            '【LabClean】界面没有渲染出来\n\n' +
+            '页面地址: ' + location.href + '\n' +
+            '脚本: ' + (scripts.length ? scripts.join('\n      ') : '（没有脚本标签）') + '\n' +
+            '样式: ' + (styles.length ? styles.join('\n      ') : '（没有样式表）') + '\n\n' +
+            '如果上面地址是 tauri.localhost，说明桌面版资源没有正确嵌入。' +
+            '</pre>'
+        }, 6000)
+      })
+    </script>
   </body>
 </html>
