@@ -4,18 +4,28 @@ import { DataTable } from './components/DataTable'
 import { EmptyState } from './components/EmptyState'
 import { Inspector } from './components/Inspector'
 import { Rail } from './components/Rail'
-import type { FillStrategy, OpResult } from './core/clean'
-import { opDropDuplicateRows, opDropEmptyRows, opFillMissing, opNormalizeNumbers, opTrimWhitespace } from './core/clean'
 import { buildDemoDataset } from './core/demo'
+import { resolveFillValue } from './core/clean'
+import { applySpec, opTitle, replay, type OpSpec } from './core/pipeline'
 import { rebuildDataset } from './core/profile'
 import { buildReportSheets } from './core/report'
 import type { Dataset, OpLogEntry, SheetInfo } from './core/types'
 import { buildWorkbook, downloadBlob, workbookToBlob } from './core/xlsx-io'
 import { analyzeColumn } from './lib/analyze'
+import { computeDiff } from './lib/diff'
 import { bytes, nowStamp } from './lib/format'
 import { TableClient } from './lib/tableClient'
 
 const EMPTY_SET = new Set<number>()
+
+export interface Step {
+  id: string
+  at: number
+  spec: OpSpec
+  title: string
+  detail: string
+  affected: number
+}
 
 /** 默认落到第一个有变化的数值列，打开页面就能看到图表，而不是看一列编号 */
 function defaultColumnIndex(ds: Dataset): number {
@@ -23,14 +33,23 @@ function defaultColumnIndex(ds: Dataset): number {
   return idx >= 0 ? idx : 0
 }
 
+function makeStepId(): string {
+  return `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+}
+
 export default function App() {
-  const [dataset, setDataset] = useState<Dataset | null>(null)
+  /** 原始数据：只解析一次，之后永不修改（算子都是写时复制） */
+  const [baseline, setBaseline] = useState<Dataset | null>(null)
+  /** 全部步骤，含被撤销掉的 */
+  const [steps, setSteps] = useState<Step[]>([])
+  /** 已应用的步数：撤销就是减一，重做就是加一 */
+  const [cursor, setCursor] = useState(0)
+
   const [sheets, setSheets] = useState<SheetInfo[]>([])
   const [activeSheet, setActiveSheet] = useState(0)
   const [file, setFile] = useState<{ id: string; name: string; size: number } | null>(null)
   const [encoding, setEncoding] = useState('')
   const [selected, setSelected] = useState(0)
-  const [logs, setLogs] = useState<OpLogEntry[]>([])
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -46,6 +65,47 @@ export default function App() {
 
   useEffect(() => () => clientRef.current?.dispose(), [])
 
+  /** 派生状态：原始数据 + 重放前 cursor 步 = 当前数据 */
+  const pipeline = useMemo(() => {
+    if (!baseline) return null
+    const applied = steps.slice(0, cursor)
+    const out = replay(
+      baseline.rows,
+      baseline.columns,
+      applied.map((s) => s.spec),
+    )
+    const dataset = applied.length === 0 ? baseline : rebuildDataset(baseline, out.rows)
+    return { rows: out.rows, origins: out.origins, dataset }
+  }, [baseline, steps, cursor])
+
+  const dataset = pipeline?.dataset ?? null
+
+  const diff = useMemo(() => {
+    if (!baseline || !pipeline) return null
+    if (pipeline.dataset === baseline) return { changedCells: 0, changedByColumn: [], removedRows: 0 }
+    return computeDiff(baseline, pipeline.rows, pipeline.origins)
+  }, [baseline, pipeline])
+
+  const appliedSteps = useMemo(() => steps.slice(0, cursor), [steps, cursor])
+  const logEntries: OpLogEntry[] = useMemo(
+    () =>
+      appliedSteps.map((s) => ({
+        id: s.id,
+        at: s.at,
+        title: s.title,
+        detail: s.detail,
+        affected: s.affected,
+      })),
+    [appliedSteps],
+  )
+
+  const loadDataset = useCallback((ds: Dataset) => {
+    setBaseline(ds)
+    setSteps([])
+    setCursor(0)
+    setSelected(defaultColumnIndex(ds))
+  }, [])
+
   const importFile = useCallback(
     async (f: File) => {
       setError(null)
@@ -54,20 +114,18 @@ export default function App() {
         const buffer = await f.arrayBuffer()
         const id = `f_${Date.now().toString(36)}`
         const res = await getClient().parse(id, f.name, buffer, (phase) => setBusy(phase))
-        setDataset(res.dataset)
+        loadDataset(res.dataset)
         setSheets(res.sheets)
         setActiveSheet(Math.max(0, res.sheets.findIndex((s) => s.name === res.dataset.sheet)))
         setFile({ id, name: f.name, size: f.size })
         setEncoding(res.encoding ?? '')
-        setSelected(defaultColumnIndex(res.dataset))
-        setLogs([])
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
         setBusy(null)
       }
     },
-    [getClient],
+    [getClient, loadDataset],
   )
 
   const onDrop = useCallback(
@@ -87,52 +145,44 @@ export default function App() {
       setBusy('正在切换工作表…')
       try {
         const res = await getClient().loadSheet(file.id, file.name, index)
-        setDataset(res.dataset)
+        loadDataset(res.dataset)
         setSheets(res.sheets)
         setActiveSheet(index)
-        setSelected(defaultColumnIndex(res.dataset))
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
         setBusy(null)
       }
     },
-    [busy, file, getClient],
+    [busy, file, getClient, loadDataset],
   )
 
-  const resetData = useCallback(async () => {
+  const reloadSource = useCallback(async () => {
     if (!file || busy) return
     if (file.id === 'demo') {
-      const demo = buildDemoDataset()
-      setDataset(demo)
-      setSelected(defaultColumnIndex(demo))
-      setLogs([])
+      loadDataset(buildDemoDataset())
       return
     }
     setBusy('正在重新读取原文件…')
     try {
       const res = await getClient().loadSheet(file.id, file.name, activeSheet)
-      setDataset(res.dataset)
-      setSelected(defaultColumnIndex(res.dataset))
-      setLogs([])
+      loadDataset(res.dataset)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(null)
     }
-  }, [activeSheet, busy, file, getClient])
+  }, [activeSheet, busy, file, getClient, loadDataset])
 
   const loadDemo = useCallback(() => {
     const demo = buildDemoDataset()
     setError(null)
-    setDataset(demo)
+    loadDataset(demo)
     setSheets([{ name: demo.sheet, rowCount: demo.meta.rowCount, colCount: demo.meta.colCount }])
     setActiveSheet(0)
     setFile({ id: 'demo', name: demo.name, size: 0 })
     setEncoding('')
-    setSelected(defaultColumnIndex(demo))
-    setLogs([])
-  }, [])
+  }, [loadDataset])
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('demo') === '1') loadDemo()
@@ -140,37 +190,92 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const applyOp = useCallback(
-    (title: string, run: (rows: Dataset['rows'], columns: Dataset['columns']) => OpResult) => {
-      if (!dataset) return
-      setBusy('正在重新体检…')
-      window.setTimeout(() => {
-        try {
-          const started = performance.now()
-          const result = run(dataset.rows, dataset.columns)
-          const next = rebuildDataset(dataset, result.rows, {
-            elapsedMs: performance.now() - started,
-          })
-          setDataset(next)
-          setLogs((prev) => [
-            {
-              id: `op_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-              at: Date.now(),
-              title,
-              detail: result.detail,
-              affected: result.affected,
-            },
-            ...prev,
-          ])
-        } catch (e) {
-          setError(e instanceof Error ? e.message : String(e))
-        } finally {
-          setBusy(null)
-        }
-      }, 30)
+  /** 执行一步清洗：截断撤销历史后追加 */
+  const runOp = useCallback(
+    (spec: OpSpec) => {
+      if (!pipeline || !baseline) return
+      const out = applySpec(pipeline.rows, pipeline.origins, pipeline.dataset.columns, spec)
+      const step: Step = {
+        id: makeStepId(),
+        at: Date.now(),
+        spec,
+        title: opTitle(spec),
+        detail: out.detail,
+        affected: out.affected,
+      }
+      setSteps((prev) => [...prev.slice(0, cursor), step])
+      setCursor(cursor + 1)
     },
-    [dataset],
+    [baseline, cursor, pipeline],
   )
+
+  const undo = useCallback(() => setCursor((c) => Math.max(0, c - 1)), [])
+  const redo = useCallback(() => setCursor((c) => Math.min(steps.length, c + 1)), [steps.length])
+
+  /** 一次性跑多步（演示模式用）：在纯数据上顺序推演，避免依赖 React 状态的时序 */
+  const runSequence = useCallback(
+    (specs: OpSpec[]) => {
+      if (!baseline) return
+      let rows = baseline.rows
+      let origins = baseline.rows.map((_, i) => i)
+      const built: Step[] = []
+      for (const spec of specs) {
+        const out = applySpec(rows, origins, baseline.columns, spec)
+        built.push({
+          id: makeStepId(),
+          at: Date.now(),
+          spec,
+          title: opTitle(spec),
+          detail: out.detail,
+          affected: out.affected,
+        })
+        rows = out.rows
+        origins = out.origins
+      }
+      setSteps(built)
+      setCursor(built.length)
+    },
+    [baseline],
+  )
+
+  /** ?demo=1&auto=1：自动演示一遍清洗流程，用于比赛演示和自检 */
+  useEffect(() => {
+    if (!baseline || steps.length > 0) return
+    if (new URLSearchParams(window.location.search).get('auto') !== '1') return
+    const idx = baseline.columns.findIndex((c) => c.type === 'number' && c.missing > 0)
+    const col = baseline.columns[idx >= 0 ? idx : 1]
+    const specs: OpSpec[] = [{ kind: 'trim' }]
+    if (col) {
+      specs.push({
+        kind: 'fillMissing',
+        colIndex: col.index,
+        colName: col.name,
+        strategy: 'median',
+        value: resolveFillValue(col, 'median'),
+      })
+    }
+    specs.push({ kind: 'dropDuplicates' })
+    runSequence(specs)
+  }, [baseline, runSequence, steps.length])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      const target = e.target as HTMLElement | null
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return
+      const key = e.key.toLowerCase()
+      if (key === 'z') {
+        e.preventDefault()
+        if (e.shiftKey) redo()
+        else undo()
+      } else if (key === 'y') {
+        e.preventDefault()
+        redo()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [redo, undo])
 
   const exportExcel = useCallback(() => {
     if (!dataset) return
@@ -183,7 +288,7 @@ export default function App() {
     setBusy('正在生成 Excel…')
     window.setTimeout(() => {
       try {
-        const wb = buildWorkbook(buildReportSheets(dataset, logs))
+        const wb = buildWorkbook(buildReportSheets(dataset, logEntries))
         const blob = workbookToBlob(wb)
         const base = (dataset.name || '数据').replace(/\.[^.]+$/, '')
         downloadBlob(blob, `${base}_清洗结果_${nowStamp()}.xlsx`)
@@ -193,7 +298,7 @@ export default function App() {
         setBusy(null)
       }
     }, 40)
-  }, [dataset, logs])
+  }, [dataset, logEntries])
 
   const analysis = useMemo(() => {
     if (!dataset) return null
@@ -202,7 +307,14 @@ export default function App() {
     return analyzeColumn(dataset.rows, col)
   }, [dataset, selected])
 
+  const compareSource = useMemo(() => {
+    if (!baseline || !pipeline || baseline === pipeline.dataset) return null
+    return { rows: baseline.rows, origins: pipeline.origins }
+  }, [baseline, pipeline])
+
   const currentColumn = dataset?.columns[selected]
+  const canUndo = cursor > 0
+  const canRedo = cursor < steps.length
 
   return (
     <div
@@ -259,10 +371,32 @@ export default function App() {
         <button className="btn" onClick={() => inputRef.current?.click()} disabled={!!busy}>
           导入文件
         </button>
+
         {dataset ? (
           <>
-            <button className="btn" onClick={() => void resetData()} disabled={!!busy}>
-              重置
+            <div className="history-group">
+              <button
+                className="btn btn-icon"
+                onClick={undo}
+                disabled={!canUndo || !!busy}
+                title="撤销 (Ctrl+Z)"
+              >
+                ↶ 撤销
+              </button>
+              <button
+                className="btn btn-icon"
+                onClick={redo}
+                disabled={!canRedo || !!busy}
+                title="重做 (Ctrl+Shift+Z)"
+              >
+                ↷ 重做
+              </button>
+              <span className="history-count">
+                {cursor}/{steps.length}
+              </span>
+            </div>
+            <button className="btn" onClick={() => void reloadSource()} disabled={!!busy}>
+              还原
             </button>
             <button className="btn btn-primary" onClick={exportExcel} disabled={!!busy}>
               导出 Excel
@@ -271,7 +405,7 @@ export default function App() {
         ) : null}
       </header>
 
-      {dataset && currentColumn ? (
+      {dataset && currentColumn && pipeline ? (
         <div className="body">
           <Rail
             dataset={dataset}
@@ -301,8 +435,8 @@ export default function App() {
                 <b>{dataset.meta.duplicateRowsChecked ? dataset.meta.duplicateRows.toLocaleString() : '—'}</b>
               </div>
               <div className="kpi">
-                <span>解析耗时</span>
-                <b>{Math.round(dataset.meta.elapsedMs)} ms</b>
+                <span>已清洗</span>
+                <b>{cursor > 0 ? `${cursor} 步` : '未清洗'}</b>
               </div>
             </div>
 
@@ -311,6 +445,7 @@ export default function App() {
               selected={selected}
               onSelect={setSelected}
               outlierRows={analysis?.outlierRows ?? EMPTY_SET}
+              compare={compareSource}
             />
 
             <ChartsDock dataset={dataset} selected={selected} analysis={analysis} />
@@ -318,21 +453,17 @@ export default function App() {
 
           <Inspector
             dataset={dataset}
+            baseline={baseline}
             column={currentColumn}
-            logs={logs}
+            steps={steps}
+            cursor={cursor}
+            diff={diff}
             busy={!!busy}
-            onTrim={() => applyOp('清理首尾空格', (rows, cols) => opTrimWhitespace(rows, cols))}
-            onDropEmpty={() => applyOp('删除全空行', (rows) => opDropEmptyRows(rows))}
-            onDedupe={() => applyOp('删除重复行', (rows, cols) => opDropDuplicateRows(rows, cols))}
-            onNormalizeNumbers={() =>
-              applyOp('数字规范化', (rows) => opNormalizeNumbers(rows, currentColumn))
-            }
-            onFill={(strategy: FillStrategy, custom: string) =>
-              applyOp(
-                '填充缺失值',
-                (rows) => opFillMissing(rows, currentColumn, strategy, custom),
-              )
-            }
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onRun={runOp}
+            onUndo={undo}
+            onRedo={redo}
           />
         </div>
       ) : (
@@ -355,6 +486,12 @@ export default function App() {
                 <span>编码 {encoding}</span>
               </>
             ) : null}
+            {diff && diff.changedCells > 0 ? (
+              <>
+                <span className="sep" />
+                <span className="tone-changed">已改动 {diff.changedCells.toLocaleString()} 个单元格</span>
+              </>
+            ) : null}
             {dataset.meta.notes.length > 0 ? (
               <>
                 <span className="sep" />
@@ -364,7 +501,7 @@ export default function App() {
           </>
         ) : null}
         <span className="statusbar-spacer" />
-        {logs.length > 0 ? <span>已执行 {logs.length} 步清洗</span> : <span>未做清洗</span>}
+        {cursor > 0 ? <span>已执行 {cursor} 步清洗 · Ctrl+Z 撤销</span> : <span>未做清洗</span>}
       </footer>
 
       {error ? (

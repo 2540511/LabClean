@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Dataset } from '../core/types'
+import type { CellValue, Dataset } from '../core/types'
 import { formatCell, isBlank } from '../core/value'
+import { sameCell } from '../lib/diff'
 import { cx, int } from '../lib/format'
 
 const ROW_H = 30
@@ -19,9 +20,11 @@ interface Props {
   selected: number
   onSelect: (index: number) => void
   outlierRows: Set<number>
+  /** 原始数据 + 行来源映射，用来标出被清洗改动过的单元格 */
+  compare?: { rows: CellValue[][]; origins: number[] } | null
 }
 
-export function DataTable({ dataset, selected, onSelect, outlierRows }: Props) {
+export function DataTable({ dataset, selected, onSelect, outlierRows, compare }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewH, setViewH] = useState(480)
@@ -85,6 +88,11 @@ export function DataTable({ dataset, selected, onSelect, outlierRows }: Props) {
         <span className="legend">
           <i className="dot dot-missing" /> 空值
           <i className="dot dot-outlier" /> 异常值
+          {compare ? (
+            <>
+              <i className="dot dot-changed" /> 已改动
+            </>
+          ) : null}
         </span>
       </div>
 
@@ -129,6 +137,9 @@ export function DataTable({ dataset, selected, onSelect, outlierRows }: Props) {
                     const v = row[c] ?? null
                     const empty = isBlank(v)
                     const isOutlierCell = isOutlierRow && c === selected
+                    const sourceRow = compare ? compare.rows[compare.origins[r]] : undefined
+                    const oldValue = compare && sourceRow ? (sourceRow[c] ?? null) : null
+                    const changed = compare && sourceRow ? !sameCell(oldValue, v) : false
                     return (
                       <div
                         key={col.key}
@@ -138,9 +149,16 @@ export function DataTable({ dataset, selected, onSelect, outlierRows }: Props) {
                           c === selected && 'is-selected',
                           empty && 'td-empty',
                           isOutlierCell && 'td-outlier',
+                          changed && 'td-changed',
                         )}
                         style={{ width: widths[c] }}
-                        title={empty ? '空值' : String(formatCell(v, col.type))}
+                        title={
+                          changed
+                            ? `原值：${isBlank(oldValue) ? '（空）' : String(formatCell(oldValue, col.type))}`
+                            : empty
+                              ? '空值'
+                              : String(formatCell(v, col.type))
+                        }
                       >
                         {empty ? '∅' : formatCell(v, col.type)}
                       </div>

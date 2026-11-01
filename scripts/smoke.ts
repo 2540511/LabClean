@@ -15,7 +15,9 @@ import {
   opDropEmptyRows,
   opFillMissing,
   opTrimWhitespace,
+  resolveFillValue,
 } from '../src/core/clean'
+import { replay, type OpSpec } from '../src/core/pipeline'
 
 let passed = 0
 const failures: string[] = []
@@ -116,18 +118,21 @@ console.log('\n[5] 长数字精度（身份证/订单号）')
   eq('原值未被截断', ds3.rows[0][0], '1234567890123456789')
 }
 
-console.log('\n[6] 清洗算子')
+console.log('\n[6] 清洗算子（写时复制，不改原始数据）')
 {
   const trimmed = opTrimWhitespace(ds.rows, ds.columns)
   check('清理空格有改动', trimmed.affected > 0, `实际 ${trimmed.affected}`)
-  eq('空格已去掉', ds.rows[2][1], 26.1)
-  eq('备注去空格', ds.rows[4][4], '含空格')
+  eq('返回结果里空格已去掉', trimmed.rows[4][4], '含空格')
+  eq('原始数据没有被改动', ds.rows[4][4], ' 含空格 ')
+  check('未改动的行仍是同一个对象', trimmed.rows[1] === ds.rows[1])
+  check('改动过的行是新对象', trimmed.rows[4] !== ds.rows[4])
 
-  const filled = opFillMissing(ds.rows, ds.columns[1], 'median')
+  const median = ds.columns[1].numeric?.median ?? 0
+  const filled = opFillMissing(trimmed.rows, 1, '温度(℃)', median)
   eq('填充缺失影响 1 个', filled.affected, 1)
-  check('填充值来自中位数', Math.abs(Number(ds.rows[3][1]) - 25.3) < 1, `实际 ${ds.rows[3][1]}`)
+  eq('填充值就是中位数', filled.rows[3][1], median)
 
-  const dedup = opDropDuplicateRows(ds.rows, ds.columns)
+  const dedup = opDropDuplicateRows(filled.rows, ds.columns)
   eq('去重删掉 1 行', dedup.affected, 1)
   eq('去重后行数', dedup.rows.length, 5)
 
@@ -209,6 +214,40 @@ console.log('\n[9] Worker 解析链路（真实 xlsx 文件，5002 行）')
   const res2 = handleRequest({ id: 100, type: 'sheet', fileId: 'probe', fileName: '实验数据示例.xlsx', sheetIndex: 1 })
   check('切换工作表成功', res2.ok === true)
   if (res2.ok) eq('第二个表 6 行', res2.dataset.meta.rowCount, 6)
+}
+
+console.log('\n[10] 撤销 / 重做（从原始数据重放）')
+{
+  const csv10 = ['姓名,城市', '张三, 北京 ', '李四,上海', '张三, 北京 ', '王五,'].join('\n')
+  const base = buildDataset('t.csv', '数据', parseCsv(csv10))
+  eq('原始 4 行', base.meta.rowCount, 4)
+
+  const step1: OpSpec = { kind: 'trim' }
+  const step2: OpSpec = { kind: 'dropDuplicates' }
+
+  const afterOne = replay(base.rows, base.columns, [step1])
+  eq('1 步后仍是 4 行', afterOne.rows.length, 4)
+  eq('空格已清理', afterOne.rows[0][1], '北京')
+  eq('原始数据没被破坏', base.rows[0][1], ' 北京 ')
+  eq('行来源映射为恒等', afterOne.origins, [0, 1, 2, 3])
+
+  const afterTwo = replay(base.rows, base.columns, [step1, step2])
+  eq('2 步后 3 行', afterTwo.rows.length, 3)
+  eq('删行后来源映射正确', afterTwo.origins, [0, 1, 3])
+
+  // 撤销一步 = 少重放一步
+  eq('撤销后回到 4 行', replay(base.rows, base.columns, [step1]).rows.length, 4)
+  // 重做 = 多重放一步
+  eq('重做后又是 3 行', replay(base.rows, base.columns, [step1, step2]).rows.length, 3)
+
+  // 填充值在生成步骤时就固定下来，所以重放结果完全一致
+  const fillValue = resolveFillValue(base.columns[1], 'mode')
+  eq('众数填充值取自当前统计', fillValue, '北京')
+  const filled = replay(base.rows, base.columns, [
+    { kind: 'fillMissing', colIndex: 1, colName: '城市', strategy: 'mode', value: fillValue },
+  ])
+  eq('空的城市被填上', filled.rows[3][1], '北京')
+  eq('重放同样的步骤两次结果一致', replay(base.rows, base.columns, [step1, step2]).origins, afterTwo.origins)
 }
 
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)

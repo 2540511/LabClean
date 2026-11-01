@@ -1,6 +1,9 @@
 import { useState } from 'react'
-import type { Column, Dataset, OpLogEntry } from '../core/types'
-import type { FillStrategy } from '../core/clean'
+import type { Column, Dataset } from '../core/types'
+import { resolveFillValue, type FillStrategy } from '../core/clean'
+import type { OpSpec } from '../core/pipeline'
+import type { Step } from '../App'
+import type { DatasetDiff } from '../lib/diff'
 import { cx, int, num, pct } from '../lib/format'
 
 const TYPE_LABEL: Record<string, string> = {
@@ -14,17 +17,20 @@ const SEVERITY_LABEL: Record<string, string> = { error: '严重', warn: '警告'
 
 interface Props {
   dataset: Dataset
+  baseline: Dataset | null
   column: Column
-  logs: OpLogEntry[]
+  steps: Step[]
+  cursor: number
+  diff: DatasetDiff | null
   busy: boolean
-  onTrim: () => void
-  onFill: (strategy: FillStrategy, custom: string) => void
-  onDedupe: () => void
-  onDropEmpty: () => void
-  onNormalizeNumbers: () => void
+  canUndo: boolean
+  canRedo: boolean
+  onRun: (spec: OpSpec) => void
+  onUndo: () => void
+  onRedo: () => void
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: 'warn' | 'bad' }) {
+function Stat({ label, value, tone }: { label: string; value: string; tone?: 'warn' | 'bad' | 'good' }) {
   return (
     <div className="stat">
       <span>{label}</span>
@@ -33,21 +39,62 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'wa
   )
 }
 
+/** 前后对比的一行：数值 + 变化量 */
+function Delta({
+  label,
+  before,
+  after,
+  goodWhenDown = true,
+  format = (v: number) => int(v),
+}: {
+  label: string
+  before: number
+  after: number
+  goodWhenDown?: boolean
+  format?: (v: number) => string
+}) {
+  const changed = before !== after
+  const down = after < before
+  const good = goodWhenDown ? down : !down
+  return (
+    <div className="delta-row">
+      <span className="delta-label">{label}</span>
+      <span className="delta-before">{format(before)}</span>
+      <span className="delta-arrow">→</span>
+      <span className="delta-after">{format(after)}</span>
+      {changed ? (
+        <span className={cx('delta-tag', good ? 'is-good' : 'is-bad')}>
+          {down ? '−' : '+'}
+          {format(Math.abs(after - before))}
+        </span>
+      ) : (
+        <span className="delta-tag is-flat">—</span>
+      )}
+    </div>
+  )
+}
+
 export function Inspector({
   dataset,
+  baseline,
   column,
-  logs,
+  steps,
+  cursor,
+  diff,
   busy,
-  onTrim,
-  onFill,
-  onDedupe,
-  onDropEmpty,
-  onNormalizeNumbers,
+  canUndo,
+  canRedo,
+  onRun,
+  onUndo,
+  onRedo,
 }: Props) {
   const [strategy, setStrategy] = useState<FillStrategy>('median')
   const stats = column.numeric
-  const isNumber = column.type === 'number'
   const numericText = column.type === 'text' && column.issues.some((i) => i.code === 'THOUSANDS_SEP')
+
+  const totalOutliers = (ds: Dataset) =>
+    ds.columns.reduce((a, c) => a + (c.numeric?.outliers ?? 0), 0)
+  const changedCols = diff ? diff.changedByColumn.filter((n) => n > 0).length : 0
 
   return (
     <aside className="inspector">
@@ -96,7 +143,9 @@ export function Inspector({
             <div className="top-values">
               {column.top.slice(0, 5).map((t) => (
                 <div key={t.value} className="top-row">
-                  <span className="top-label">{t.value.length > 14 ? `${t.value.slice(0, 14)}…` : t.value || '（空）'}</span>
+                  <span className="top-label">
+                    {t.value.length > 14 ? `${t.value.slice(0, 14)}…` : t.value || '（空）'}
+                  </span>
                   <span className="top-bar">
                     <i style={{ width: `${Math.max(2, (t.count / (column.top[0]?.count || 1)) * 100)}%` }} />
                   </span>
@@ -122,20 +171,37 @@ export function Inspector({
       </section>
 
       <section className="panel">
-        <div className="panel-head">清洗动作</div>
+        <div className="panel-head">
+          清洗动作
+          <span className="panel-hint">可撤销</span>
+        </div>
         <div className="panel-body">
           <div className="actions">
-            <button className="btn btn-ghost" disabled={busy} onClick={onTrim}>
+            <button className="btn btn-ghost" disabled={busy} onClick={() => onRun({ kind: 'trim' })}>
               清理首尾空格
             </button>
-            <button className="btn btn-ghost" disabled={busy} onClick={onDropEmpty}>
+            <button
+              className="btn btn-ghost"
+              disabled={busy}
+              onClick={() => onRun({ kind: 'dropEmptyRows' })}
+            >
               删除全空行
             </button>
-            <button className="btn btn-ghost" disabled={busy} onClick={onDedupe}>
+            <button
+              className="btn btn-ghost"
+              disabled={busy}
+              onClick={() => onRun({ kind: 'dropDuplicates' })}
+            >
               删除重复行
             </button>
             {numericText ? (
-              <button className="btn btn-ghost" disabled={busy} onClick={onNormalizeNumbers}>
+              <button
+                className="btn btn-ghost"
+                disabled={busy}
+                onClick={() =>
+                  onRun({ kind: 'normalizeNumbers', colIndex: column.index, colName: column.name })
+                }
+              >
                 转成数字
               </button>
             ) : null}
@@ -148,12 +214,8 @@ export function Inspector({
               onChange={(e) => setStrategy(e.target.value as FillStrategy)}
               disabled={busy}
             >
-              {isNumber || stats ? (
-                <>
-                  <option value="median">用中位数填充</option>
-                  <option value="mean">用平均值填充</option>
-                </>
-              ) : null}
+              {stats ? <option value="median">用中位数填充</option> : null}
+              {stats ? <option value="mean">用平均值填充</option> : null}
               <option value="mode">用出现最多的值填充</option>
               <option value="zero">填 0</option>
               <option value="text">填「未填写」</option>
@@ -161,7 +223,15 @@ export function Inspector({
             <button
               className="btn btn-primary"
               disabled={busy || column.missing === 0}
-              onClick={() => onFill(strategy, '')}
+              onClick={() =>
+                onRun({
+                  kind: 'fillMissing',
+                  colIndex: column.index,
+                  colName: column.name,
+                  strategy,
+                  value: resolveFillValue(column, strategy),
+                })
+              }
             >
               填充缺失
             </button>
@@ -170,21 +240,78 @@ export function Inspector({
         </div>
       </section>
 
+      <section className="panel">
+        <div className="panel-head">
+          清洗前后对比
+          <span className="panel-hint">
+            <button className="link-btn" disabled={!canUndo || busy} onClick={onUndo}>
+              撤销
+            </button>
+            <button className="link-btn" disabled={!canRedo || busy} onClick={onRedo}>
+              重做
+            </button>
+          </span>
+        </div>
+        <div className="panel-body">
+          {baseline && diff && diff.changedCells + diff.removedRows > 0 ? (
+            <>
+              <Delta label="行数" before={baseline.meta.rowCount} after={dataset.meta.rowCount} />
+              <Delta
+                label="空单元格"
+                before={baseline.meta.missingCells}
+                after={dataset.meta.missingCells}
+              />
+              <Delta
+                label="重复行"
+                before={baseline.meta.duplicateRows}
+                after={dataset.meta.duplicateRows}
+              />
+              <Delta label="异常值" before={totalOutliers(baseline)} after={totalOutliers(dataset)} />
+              <Delta
+                label="质量分"
+                before={baseline.meta.score}
+                after={dataset.meta.score}
+                goodWhenDown={false}
+              />
+              <div className="delta-foot">
+                改动 <b>{int(diff.changedCells)}</b> 个单元格
+                {changedCols > 0 ? `，涉及 ${changedCols} 列` : ''}
+                {diff.removedRows > 0 ? `，删除 ${int(diff.removedRows)} 行` : ''}
+              </div>
+            </>
+          ) : (
+            <div className="log-empty">还没做清洗，做一步就会显示前后差异</div>
+          )}
+        </div>
+      </section>
+
       <section className="panel panel-grow">
-        <div className="panel-head">操作记录</div>
+        <div className="panel-head">
+          清洗步骤
+          {steps.length > 0 ? (
+            <span className="panel-hint">
+              {cursor}/{steps.length}
+            </span>
+          ) : null}
+        </div>
         <div className="log-list">
-          {logs.length === 0 ? (
+          {steps.length === 0 ? (
             <div className="log-empty">还没有做过清洗</div>
           ) : (
-            logs.map((log) => (
-              <div key={log.id} className="log-item">
-                <div className="log-title">
-                  {log.title}
-                  {log.affected > 0 ? <span className="log-count">{log.affected}</span> : null}
+            steps.map((step, i) => {
+              const applied = i < cursor
+              return (
+                <div key={step.id} className={cx('log-item', !applied && 'is-undone')}>
+                  <div className="log-title">
+                    <span className="step-no">{i + 1}</span>
+                    {step.title}
+                    {step.affected > 0 ? <span className="log-count">{step.affected}</span> : null}
+                    {!applied ? <span className="undone-tag">已撤销</span> : null}
+                  </div>
+                  <div className="log-detail">{step.detail}</div>
                 </div>
-                <div className="log-detail">{log.detail}</div>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
       </section>
