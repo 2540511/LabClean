@@ -1,12 +1,18 @@
 import type { CellValue, Column } from './types'
 import {
   FILL_LABEL,
+  FILTER_LABEL,
+  opDropColumn,
   opDropDuplicateRows,
   opDropEmptyRows,
+  opFilterRows,
   opFillMissing,
+  opMoveColumn,
   opNormalizeNumbers,
+  opRenameColumn,
   opTrimWhitespace,
   type FillStrategy,
+  type FilterOp,
 } from './clean'
 
 /** 一步清洗动作的完整描述：只带数据，不带函数，所以可序列化、可重放、可存模板 */
@@ -31,11 +37,19 @@ export type OpSpec =
       /** 扫描时算好的待删行下标：重放时直接用，结果才稳定 */
       dropRows: number[]
     }
+  | { kind: 'filterRows'; colIndex: number; colName: string; op: FilterOp; value: string }
+  | { kind: 'dropColumn'; colIndex: number; colName: string }
+  | { kind: 'moveColumn'; from: number; to: number; colName: string }
+  | { kind: 'renameColumn'; colIndex: number; from: string; to: string }
 
-export interface StepOutcome {
+/** 管线状态：行、每行来源、以及当前列名（列操作会改变列集合） */
+export interface TableState {
   rows: CellValue[][]
-  /** 当前每行来自原始数据的第几行，用来做逐格对比 */
   origins: number[]
+  headers: string[]
+}
+
+export interface StepOutcome extends TableState {
   affected: number
   detail: string
 }
@@ -59,12 +73,15 @@ export function buildStepSequence(
   baselineRows: CellValue[][],
   columns: Column[],
   specs: OpSpec[],
-): { steps: StepRecord[]; rows: CellValue[][]; origins: number[] } {
-  let rows = baselineRows
-  let origins = baselineRows.map((_, i) => i)
+): { steps: StepRecord[]; rows: CellValue[][]; origins: number[]; headers: string[] } {
+  let state: TableState = {
+    rows: baselineRows,
+    origins: baselineRows.map((_, i) => i),
+    headers: columns.map((c) => c.name),
+  }
   const steps: StepRecord[] = []
   for (const spec of specs) {
-    const out = applySpec(rows, origins, columns, spec)
+    const out = applySpec(state, spec)
     steps.push({
       id: makeStepId(),
       at: Date.now(),
@@ -73,10 +90,9 @@ export function buildStepSequence(
       detail: out.detail,
       affected: out.affected,
     })
-    rows = out.rows
-    origins = out.origins
+    state = { rows: out.rows, origins: out.origins, headers: out.headers }
   }
-  return { steps, rows, origins }
+  return { steps, ...state }
 }
 
 export function opTitle(spec: OpSpec): string {
@@ -93,28 +109,35 @@ export function opTitle(spec: OpSpec): string {
       return '数字规范化'
     case 'fuzzyDedupe':
       return `模糊去重（${spec.colName}）`
+    case 'filterRows':
+      return `行筛选（${spec.colName} ${FILTER_LABEL[spec.op]} ${spec.value}）`
+    case 'dropColumn':
+      return `删除列（${spec.colName}）`
+    case 'moveColumn':
+      return `调整列顺序（${spec.colName}）`
+    case 'renameColumn':
+      return `重命名列（${spec.from} → ${spec.to}）`
   }
 }
 
 /** 在给定状态上执行一步，返回新状态（不修改入参） */
-export function applySpec(
-  rows: CellValue[][],
-  origins: number[],
-  columns: Column[],
-  spec: OpSpec,
-): StepOutcome {
+export function applySpec(state: TableState, spec: OpSpec): StepOutcome {
+  const { rows, origins, headers } = state
+  // 算子只用到列下标，这里用当前表头造一份轻量列信息
+  const columns = headers.map((name, index) => ({ name, index }) as Column)
+
   switch (spec.kind) {
     case 'trim': {
       const r = opTrimWhitespace(rows, columns)
-      return { rows: r.rows, origins, affected: r.affected, detail: r.detail }
+      return { rows: r.rows, origins, headers, affected: r.affected, detail: r.detail }
     }
     case 'fillMissing': {
       const r = opFillMissing(rows, spec.colIndex, spec.colName, spec.value)
-      return { rows: r.rows, origins, affected: r.affected, detail: r.detail }
+      return { rows: r.rows, origins, headers, affected: r.affected, detail: r.detail }
     }
     case 'normalizeNumbers': {
       const r = opNormalizeNumbers(rows, spec.colIndex, spec.colName)
-      return { rows: r.rows, origins, affected: r.affected, detail: r.detail }
+      return { rows: r.rows, origins, headers, affected: r.affected, detail: r.detail }
     }
     case 'dropDuplicates': {
       const r = opDropDuplicateRows(rows, columns)
@@ -122,6 +145,7 @@ export function applySpec(
       return {
         rows: r.rows,
         origins: kept.map((i) => origins[i]),
+        headers,
         affected: r.affected,
         detail: r.detail,
       }
@@ -132,6 +156,7 @@ export function applySpec(
       return {
         rows: r.rows,
         origins: kept.map((i) => origins[i]),
+        headers,
         affected: r.affected,
         detail: r.detail,
       }
@@ -149,9 +174,33 @@ export function applySpec(
       return {
         rows: keptRows,
         origins: keptIdx.map((i) => origins[i]),
+        headers,
         affected: removed,
         detail: `「${spec.colName}」模糊去重删除 ${removed} 行（相似度阈值 ${spec.threshold.toFixed(2)}）`,
       }
+    }
+    case 'filterRows': {
+      const r = opFilterRows(rows, spec.colIndex, spec.colName, spec.op, spec.value)
+      const kept = r.kept ?? rows.map((_, i) => i)
+      return {
+        rows: r.rows,
+        origins: kept.map((i) => origins[i]),
+        headers,
+        affected: r.affected,
+        detail: r.detail,
+      }
+    }
+    case 'dropColumn': {
+      const r = opDropColumn(rows, headers, spec.colIndex)
+      return { rows: r.rows, origins, headers: r.headers, affected: r.affected, detail: r.detail }
+    }
+    case 'moveColumn': {
+      const r = opMoveColumn(rows, headers, spec.from, spec.to)
+      return { rows: r.rows, origins, headers: r.headers, affected: r.affected, detail: r.detail }
+    }
+    case 'renameColumn': {
+      const r = opRenameColumn(headers, spec.colIndex, spec.to)
+      return { rows, origins, headers: r.headers, affected: 0, detail: r.detail }
     }
   }
 }
@@ -165,18 +214,14 @@ export function replay(
   columns: Column[],
   specs: OpSpec[],
 ): StepOutcome {
-  let rows = baselineRows
-  let origins: number[] | null = null
+  let state: TableState = {
+    rows: baselineRows,
+    origins: baselineRows.map((_, i) => i),
+    headers: columns.map((c) => c.name),
+  }
   for (const spec of specs) {
-    if (!origins) origins = baselineRows.map((_, i) => i)
-    const out = applySpec(rows, origins, columns, spec)
-    rows = out.rows
-    origins = out.origins
+    const out = applySpec(state, spec)
+    state = { rows: out.rows, origins: out.origins, headers: out.headers }
   }
-  return {
-    rows,
-    origins: origins ?? baselineRows.map((_, i) => i),
-    affected: 0,
-    detail: '',
-  }
+  return { ...state, affected: 0, detail: '' }
 }

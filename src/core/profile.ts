@@ -565,13 +565,13 @@ export function buildDataset(
   return profileRows(name, sheet, headers, trimmedBody, opts)
 }
 
-/** 清洗之后重算体检，列名保持不变 */
+/** 清洗之后重算体检，列名保持不变（列操作改变了列集合时可传入 headers） */
 export function rebuildDataset(
   prev: Dataset,
   rows: CellValue[][],
-  opts: { elapsedMs?: number } = {},
+  opts: { elapsedMs?: number; headers?: string[] } = {},
 ): Dataset {
-  const headers = prev.columns.map((c) => c.name)
+  const headers = opts.headers ?? prev.columns.map((c) => c.name)
   return profileRows(prev.name, prev.sheet, headers, rows, {
     id: prev.id,
     source: prev.meta.source,

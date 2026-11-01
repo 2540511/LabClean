@@ -109,18 +109,27 @@ export default function App() {
       active.baseline.columns,
       applied.map((s) => s.spec),
     )
-    const dataset = applied.length === 0 ? active.baseline : rebuildDataset(active.baseline, out.rows)
-    return { rows: out.rows, origins: out.origins, dataset }
+    const dataset =
+      applied.length === 0
+        ? active.baseline
+        : rebuildDataset(active.baseline, out.rows, { headers: out.headers })
+    return { rows: out.rows, origins: out.origins, headers: out.headers, dataset }
   }, [active])
 
   const dataset = pipeline?.dataset ?? null
+
+  // 删列之后，选中的列下标可能越界，夹回有效范围
+  useEffect(() => {
+    if (!dataset || dataset.columns.length === 0) return
+    if (selected > dataset.columns.length - 1) setSelected(dataset.columns.length - 1)
+  }, [dataset, selected])
 
   const diff = useMemo(() => {
     if (!active || !pipeline) return null
     if (pipeline.dataset === active.baseline) {
       return { changedCells: 0, changedByColumn: [], removedRows: 0 }
     }
-    return computeDiff(active.baseline, pipeline.rows, pipeline.origins)
+    return computeDiff(active.baseline, pipeline.rows, pipeline.origins, pipeline.headers)
   }, [active, pipeline])
 
   const patchActive = useCallback(
@@ -276,7 +285,10 @@ export default function App() {
   const runOp = useCallback(
     (spec: OpSpec) => {
       if (!active || !pipeline) return
-      const out = applySpec(pipeline.rows, pipeline.origins, pipeline.dataset.columns, spec)
+      const out = applySpec(
+        { rows: pipeline.rows, origins: pipeline.origins, headers: pipeline.headers },
+        spec,
+      )
       const step: StepRecord = {
         id: makeStepId(),
         at: Date.now(),
@@ -470,6 +482,11 @@ export default function App() {
 
   const compareSource = useMemo(() => {
     if (!active || !pipeline || active.baseline === pipeline.dataset) return null
+    // 列被删除/重排/改名后，「原值」悬浮提示会指错列，干脆关掉
+    const sameLayout =
+      pipeline.headers.length === active.baseline.columns.length &&
+      pipeline.headers.every((h, i) => h === active.baseline.columns[i].name)
+    if (!sameLayout) return null
     return { rows: active.baseline.rows, origins: pipeline.origins }
   }, [active, pipeline])
 

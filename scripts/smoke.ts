@@ -18,6 +18,7 @@ import {
   resolveFillValue,
 } from '../src/core/clean'
 import { replay, type OpSpec } from '../src/core/pipeline'
+import { computeDiff } from '../src/lib/diff'
 import { buildCompareSheets, buildReportSheets } from '../src/core/report'
 import { sourceMetrics, type DataSource } from '../src/core/compare'
 import {
@@ -442,6 +443,90 @@ console.log('\n[13] 模糊去重')
   ])
   eq('重放后剩 2 行', dropped.rows.length, 2)
   eq('保留的是第一条和无关的那条', dropped.origins, [0, 3])
+}
+
+console.log('\n[14] 行筛选与列操作')
+{
+  const csv = ['姓名,年龄,城市', '张三,23,北京', '李四,31,上海', '王五,,广州', '赵六,45,北京'].join('\n')
+  const base = buildDataset('t.csv', '数据', parseCsv(csv))
+  eq('初始 4 行 3 列', [base.meta.rowCount, base.columns.length], [4, 3])
+
+  // 行筛选：大于
+  const gt = replay(base.rows, base.columns, [
+    { kind: 'filterRows', colIndex: 1, colName: '年龄', op: 'gt', value: '30' },
+  ])
+  eq('大于 30 保留 2 行', gt.rows.length, 2)
+  eq('保留的行按原顺序', gt.origins, [1, 3])
+  eq('空值行被过滤掉', gt.rows.map((r) => r[0]), ['李四', '赵六'])
+
+  // 行筛选：小于 / 等于
+  const lt = replay(base.rows, base.columns, [
+    { kind: 'filterRows', colIndex: 1, colName: '年龄', op: 'lt', value: '30' },
+  ])
+  eq('小于 30 只留张三', lt.rows.map((r) => r[0]), ['张三'])
+
+  const eqOp = replay(base.rows, base.columns, [
+    { kind: 'filterRows', colIndex: 2, colName: '城市', op: 'eq', value: '北京' },
+  ])
+  eq('等于按文本匹配', eqOp.rows.map((r) => r[0]), ['张三', '赵六'])
+
+  // 行筛选：包含 / 不包含（忽略大小写）
+  const en = buildDataset('e.csv', '数据', parseCsv('名,备注\nA,Alpha\nB,beta\nC,alphabet'))
+  const has = replay(en.rows, en.columns, [
+    { kind: 'filterRows', colIndex: 1, colName: '备注', op: 'contains', value: 'ALPHA' },
+  ])
+  eq('包含忽略大小写', has.rows.map((r) => r[0]), ['A', 'C'])
+
+  const notHas = replay(en.rows, en.columns, [
+    { kind: 'filterRows', colIndex: 1, colName: '备注', op: 'notContains', value: 'alpha' },
+  ])
+  eq('不包含', notHas.rows.map((r) => r[0]), ['B'])
+
+  // 删除列
+  const drop = replay(base.rows, base.columns, [{ kind: 'dropColumn', colIndex: 1, colName: '年龄' }])
+  eq('删列后表头少一个', drop.headers, ['姓名', '城市'])
+  eq('删列后每行少一格', drop.rows[0], ['张三', '北京'])
+  const dropDs = rebuildDataset(base, drop.rows, { headers: drop.headers })
+  eq('重建数据集列数', dropDs.columns.length, 2)
+  eq('重建后列名', dropDs.columns.map((c) => c.name), ['姓名', '城市'])
+
+  // 调整列顺序
+  const moved = replay(base.rows, base.columns, [
+    { kind: 'moveColumn', from: 2, to: 0, colName: '城市' },
+  ])
+  eq('列顺序调整后表头', moved.headers, ['城市', '姓名', '年龄'])
+  eq('列顺序调整后单元格跟着走', moved.rows[0], ['北京', '张三', 23])
+
+  // 重命名
+  const renamed = replay(base.rows, base.columns, [
+    { kind: 'renameColumn', colIndex: 1, from: '年龄', to: '年龄(岁)' },
+  ])
+  eq('重命名只改表头', renamed.headers, ['姓名', '年龄(岁)', '城市'])
+  eq('重命名不动数据', renamed.rows, base.rows)
+
+  // 结构化操作之后，按当前列下标继续做值操作（下标要跟着走）
+  const chained = replay(base.rows, base.columns, [
+    { kind: 'dropColumn', colIndex: 0, colName: '姓名' },
+    { kind: 'fillMissing', colIndex: 0, colName: '年龄', strategy: 'zero', value: 0 },
+  ])
+  eq('删列后再按新下标填充', chained.rows[2], [0, '广州'])
+
+  // 筛选后再删列、再重命名，整条链可重放且能撤销到最后
+  const full = replay(base.rows, base.columns, [
+    { kind: 'filterRows', colIndex: 2, colName: '城市', op: 'eq', value: '北京' },
+    { kind: 'dropColumn', colIndex: 1, colName: '年龄' },
+    { kind: 'renameColumn', colIndex: 1, from: '城市', to: '所在城市' },
+  ])
+  eq('链式操作后表头', full.headers, ['姓名', '所在城市'])
+  eq('链式操作后行数', full.rows.length, 2)
+  const undone = replay(base.rows, base.columns, [])
+  eq('撤销到 0 步回到原始数据', [undone.rows.length, undone.headers.length], [4, 3])
+
+  // 结构变化后的逐格对比：按列名对齐，不该把没动的单元格算成改动
+  const diff = computeDiff(base, drop.rows, drop.origins, drop.headers)
+  eq('删列后没有单元格被误判为改动', diff.changedCells, 0)
+  eq('对比列数跟随当前列', diff.changedByColumn.length, 2)
+  eq('删掉的行数能算出来', computeDiff(base, gt.rows, gt.origins, gt.headers).removedRows, 2)
 }
 
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)

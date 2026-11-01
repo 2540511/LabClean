@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Column, Dataset } from '../core/types'
-import { resolveFillValue, type FillStrategy } from '../core/clean'
+import { FILTER_LABEL, resolveFillValue, type FillStrategy, type FilterOp } from '../core/clean'
 import type { OpSpec, StepRecord } from '../core/pipeline'
 import type { DatasetDiff } from '../lib/diff'
 import { cx, int, num, pct } from '../lib/format'
@@ -92,8 +92,46 @@ export function Inspector({
   onOpenFuzzy,
 }: Props) {
   const [strategy, setStrategy] = useState<FillStrategy>('median')
+  const [filterOp, setFilterOp] = useState<FilterOp>('gt')
+  const [filterValue, setFilterValue] = useState('')
+  const [renameValue, setRenameValue] = useState(column.name)
   const stats = column.numeric
   const numericText = column.type === 'text' && column.issues.some((i) => i.code === 'THOUSANDS_SEP')
+
+  // 换列时把重命名输入框同步成当前列名
+  useEffect(() => {
+    setRenameValue(column.name)
+  }, [column.name, column.index])
+
+  const canFilter = filterValue.trim() !== '' && !busy
+  const canRename = renameValue.trim() !== '' && renameValue.trim() !== column.name && !busy
+  const lastIndex = dataset.columns.length - 1
+
+  const runFilter = () => {
+    if (!canFilter) return
+    onRun({
+      kind: 'filterRows',
+      colIndex: column.index,
+      colName: column.name,
+      op: filterOp,
+      value: filterValue.trim(),
+    })
+  }
+  const doRename = () => {
+    if (!canRename) return
+    onRun({
+      kind: 'renameColumn',
+      colIndex: column.index,
+      from: column.name,
+      to: renameValue.trim(),
+    })
+  }
+  const moveColumn = (to: number) => {
+    onRun({ kind: 'moveColumn', from: column.index, to, colName: column.name })
+  }
+  const dropColumn = () => {
+    onRun({ kind: 'dropColumn', colIndex: column.index, colName: column.name })
+  }
 
   const totalOutliers = (ds: Dataset) =>
     ds.columns.reduce((a, c) => a + (c.numeric?.outliers ?? 0), 0)
@@ -243,6 +281,96 @@ export function Inspector({
             </button>
           </div>
           {column.missing === 0 ? <div className="hint">这一列没有空值</div> : null}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          行筛选
+          <span className="panel-hint">保留符合条件的行</span>
+        </div>
+        <div className="panel-body">
+          <div className="fill-row">
+            <select
+              className="select select-narrow"
+              value={filterOp}
+              onChange={(e) => setFilterOp(e.target.value as FilterOp)}
+              disabled={busy}
+              aria-label="筛选条件"
+            >
+              {(Object.keys(FILTER_LABEL) as FilterOp[]).map((op) => (
+                <option key={op} value={op}>
+                  {FILTER_LABEL[op]}
+                </option>
+              ))}
+            </select>
+            <input
+              className="select filter-input"
+              value={filterValue}
+              onChange={(e) => setFilterValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') runFilter()
+              }}
+              placeholder="条件值"
+              disabled={busy}
+              aria-label="条件值"
+            />
+          </div>
+          <button className="btn btn-ghost block-btn" disabled={!canFilter} onClick={runFilter}>
+            保留「{column.name}」{FILTER_LABEL[filterOp]}「{filterValue.trim() || '…'}」的行
+          </button>
+          <div className="hint">
+            大于/小于按数值比较（条件值不是数字时按字符串序），空值不保留；包含/不包含按文本，忽略大小写
+          </div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          列操作
+          <span className="panel-hint">{dataset.columns.length} 列</span>
+        </div>
+        <div className="panel-body">
+          <div className="fill-row">
+            <input
+              className="select filter-input"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') doRename()
+              }}
+              placeholder="新列名"
+              disabled={busy}
+              aria-label="新列名"
+            />
+            <button className="btn btn-ghost" disabled={!canRename} onClick={doRename}>
+              重命名
+            </button>
+          </div>
+          <div className="actions">
+            <button
+              className="btn btn-ghost"
+              disabled={busy || column.index === 0}
+              onClick={() => moveColumn(column.index - 1)}
+            >
+              左移一位
+            </button>
+            <button
+              className="btn btn-ghost"
+              disabled={busy || column.index >= lastIndex}
+              onClick={() => moveColumn(column.index + 1)}
+            >
+              右移一位
+            </button>
+          </div>
+          <button
+            className="btn btn-ghost block-btn danger-text"
+            disabled={busy || dataset.columns.length <= 1}
+            onClick={dropColumn}
+          >
+            删除「{column.name}」这一列
+          </button>
+          <div className="hint">至少保留一列；删除只能撤销，导出会少这一列</div>
         </div>
       </section>
 

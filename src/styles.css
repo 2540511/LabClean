@@ -843,6 +843,35 @@ select {
   font-size: 11px;
   color: var(--faint);
 }
+/* 行筛选 / 列操作 */
+.select-narrow {
+  flex: 0 0 92px;
+}
+.filter-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 12px;
+  color: var(--ink-2);
+  padding: 0 8px;
+}
+.filter-input:focus,
+.select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-weak);
+}
+.block-btn {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+.danger-text {
+  color: var(--danger);
+}
 
 /* ---------- 按钮 ---------- */
 .btn {

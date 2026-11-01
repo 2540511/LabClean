@@ -21,17 +21,26 @@ export function computeDiff(
   baseline: Dataset,
   rows: CellValue[][],
   origins: number[],
+  headers?: string[],
 ): DatasetDiff {
-  const colCount = baseline.columns.length
+  const colCount = headers?.length ?? baseline.columns.length
   const changedByColumn = new Array<number>(colCount).fill(0)
   let changedCells = 0
+
+  // 列被删除/重排后，当前第 i 列在原始数据里可能是另一列，按列名对回去再比
+  const sourceIndex = new Array<number>(colCount)
+  for (let c = 0; c < colCount; c++) {
+    const name = headers?.[c]
+    const found = name === undefined ? -1 : baseline.columns.findIndex((col) => col.name === name)
+    sourceIndex[c] = found >= 0 ? found : c
+  }
 
   for (let r = 0; r < rows.length; r++) {
     const source = baseline.rows[origins[r]]
     if (!source) continue
     const row = rows[r]
     for (let c = 0; c < colCount; c++) {
-      if (!sameCell(source[c] ?? null, row[c] ?? null)) {
+      if (!sameCell(source[sourceIndex[c]] ?? null, row[c] ?? null)) {
         changedByColumn[c]++
         changedCells++
       }

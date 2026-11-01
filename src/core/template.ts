@@ -1,5 +1,5 @@
 import type { Column } from './types'
-import { FILL_LABEL, resolveFillValue, type FillStrategy } from './clean'
+import { FILL_LABEL, FILTER_LABEL, resolveFillValue, type FillStrategy, type FilterOp } from './clean'
 import type { OpSpec } from './pipeline'
 
 /**
@@ -12,6 +12,11 @@ export type TemplateStep =
   | { kind: 'dropEmptyRows' }
   | { kind: 'normalizeNumbers'; colName: string }
   | { kind: 'fillMissing'; colName: string; strategy: FillStrategy; custom?: string }
+  | { kind: 'filterRows'; colName: string; op: FilterOp; value: string }
+  | { kind: 'dropColumn'; colName: string }
+  /** 目标位置是列下标，套用到别的表时按「第几列」理解 */
+  | { kind: 'moveColumn'; colName: string; to: number }
+  | { kind: 'renameColumn'; colName: string; to: string }
 
 export interface CleanTemplate {
   id: string
@@ -45,6 +50,14 @@ export function templateStepLabel(step: TemplateStep): string {
       return `转数字（${step.colName}）`
     case 'fillMissing':
       return `填充缺失（${step.colName} · ${FILL_LABEL[step.strategy]}）`
+    case 'filterRows':
+      return `行筛选（${step.colName} ${FILTER_LABEL[step.op]} ${step.value}）`
+    case 'dropColumn':
+      return `删除列（${step.colName}）`
+    case 'moveColumn':
+      return `调整列顺序（${step.colName} → 第 ${step.to + 1} 列）`
+    case 'renameColumn':
+      return `重命名列（${step.colName} → ${step.to}）`
   }
 }
 
@@ -79,6 +92,23 @@ export function toTemplateSteps(specs: OpSpec[], columns: Column[]): TemplateSte
       case 'fuzzyDedupe':
         // 模糊去重的待删行是「扫出来的」，换成另一张表就不成立了，所以不进模板
         break
+      case 'filterRows':
+        out.push({
+          kind: 'filterRows',
+          colName: columns[spec.colIndex]?.name ?? spec.colName,
+          op: spec.op,
+          value: spec.value,
+        })
+        break
+      case 'dropColumn':
+        out.push({ kind: 'dropColumn', colName: columns[spec.colIndex]?.name ?? spec.colName })
+        break
+      case 'moveColumn':
+        out.push({ kind: 'moveColumn', colName: spec.colName, to: spec.to })
+        break
+      case 'renameColumn':
+        out.push({ kind: 'renameColumn', colName: spec.from, to: spec.to })
+        break
     }
   }
   return out
@@ -90,6 +120,15 @@ export function toTemplateSteps(specs: OpSpec[], columns: Column[]): TemplateSte
  */
 export function materializeSteps(steps: TemplateStep[], columns: Column[]): OpSpec[] {
   const out: OpSpec[] = []
+  // 列操作的中间状态：删列/调序/重命名之后，后续步骤的列下标要跟着当前布局算
+  const names = columns.map((c) => c.name)
+  const indexOf = (name: string) => {
+    const exact = names.indexOf(name)
+    if (exact >= 0) return exact
+    const lower = name.trim().toLowerCase()
+    return names.findIndex((n) => n.trim().toLowerCase() === lower)
+  }
+
   for (const step of steps) {
     if (step.kind === 'trim' || step.kind === 'dropDuplicates' || step.kind === 'dropEmptyRows') {
       out.push({ kind: step.kind })
@@ -97,15 +136,39 @@ export function materializeSteps(steps: TemplateStep[], columns: Column[]): OpSp
     }
     const col = findColumnByName(columns, step.colName)
     if (!col) continue
+    const idx = indexOf(step.colName)
+    if (idx < 0) continue
+
     if (step.kind === 'normalizeNumbers') {
-      out.push({ kind: 'normalizeNumbers', colIndex: col.index, colName: col.name })
+      out.push({ kind: 'normalizeNumbers', colIndex: idx, colName: col.name })
+      continue
+    }
+    if (step.kind === 'filterRows') {
+      out.push({ kind: 'filterRows', colIndex: idx, colName: col.name, op: step.op, value: step.value })
+      continue
+    }
+    if (step.kind === 'dropColumn') {
+      out.push({ kind: 'dropColumn', colIndex: idx, colName: col.name })
+      names.splice(idx, 1)
+      continue
+    }
+    if (step.kind === 'moveColumn') {
+      const to = Math.max(0, Math.min(names.length - 1, step.to))
+      out.push({ kind: 'moveColumn', from: idx, to, colName: col.name })
+      const [moved] = names.splice(idx, 1)
+      names.splice(to, 0, moved)
+      continue
+    }
+    if (step.kind === 'renameColumn') {
+      out.push({ kind: 'renameColumn', colIndex: idx, from: col.name, to: step.to })
+      names[idx] = step.to
       continue
     }
     const value = resolveFillValue(col, step.strategy, step.custom)
     if (value === null) continue
     out.push({
       kind: 'fillMissing',
-      colIndex: col.index,
+      colIndex: idx,
       colName: col.name,
       strategy: step.strategy,
       value,
