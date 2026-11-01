@@ -6,3 +6,8 @@ dist/
 .DS_Store
 .vite/
 src-tauri/target/
+.rust/
+release/
+
+# 临时安装器
+rustup-init.exe

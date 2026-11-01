@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LabClean",
+  "version": "0.1.0",
+  "identifier": "com.labclean.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "LabClean · 实验数据清洗机",
+        "width": 1500,
+        "height": 940,
+        "minWidth": 1180,
+        "minHeight": 720,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "实验数据清洗机",
+    "longDescription": "LabClean —— 纯本地运行的实验数据清洗与可视化工具：导入、体检、清洗、对比、导出，数据不出本机。"
+  }
+}

@@ -11,7 +11,9 @@
     "check": "tsc --noEmit",
     "smoke": "node scripts/run-smoke.mjs",
     "serve": "node scripts/serve.mjs",
-    "sample": "node scripts/make-sample.mjs"
+    "sample": "node scripts/make-sample.mjs",
+    "exe": "node scripts/build-exe.mjs",
+    "exe:installer": "node scripts/build-exe.mjs --bundle"
   },
   "dependencies": {
     "echarts": "^5.5.1",
@@ -21,6 +23,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
