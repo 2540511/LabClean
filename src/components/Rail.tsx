@@ -1,5 +1,6 @@
 import type { DataSource } from '../core/compare'
 import type { Dataset } from '../core/types'
+import { formatNumber } from '../core/value'
 import { classifySeverity } from '../lib/analyze'
 import { cx, int, pct } from '../lib/format'
 import { SourceList } from './SourceList'
@@ -27,6 +28,9 @@ interface Props {
   /** 哪些列需要把异常值标红 */
   redColumns: Set<number>
   onToggleRedColumn: (index: number) => void
+  /** 当前选中列的异常值行，展开在字段卡片下面 */
+  outliers: { row: number; value: number }[]
+  onJumpRow: (row: number) => void
   onSelectSource: (id: string) => void
   onRemoveSource: (id: string) => void
   onAddSource: () => void
@@ -70,6 +74,8 @@ export function Rail({
   onSelect,
   redColumns,
   onToggleRedColumn,
+  outliers,
+  onJumpRow,
   onSelectSource,
   onRemoveSource,
   onAddSource,
@@ -129,31 +135,55 @@ export function Rail({
         <div className="col-list">
           {dataset.columns.map((col, i) => {
             const tone = classifySeverity(col.score)
+            const isOpen = i === selected && outliers.length > 0
             return (
-              <div key={col.key} className="col-row">
-                <button
-                  className={cx('col-item', i === selected && 'is-active')}
-                  onClick={() => onSelect(i)}
-                  title={col.issues.map((x) => x.message).join('；') || '没有发现问题'}
-                >
-                  <i className="col-dot" style={{ background: DOT_COLOR[tone] }} />
-                  <span className="col-name">{col.name}</span>
-                  <span className={cx('type-pill', `type-${col.type}`)}>{TYPE_SHORT[col.type]}</span>
-                  {col.issues.length > 0 ? <span className="col-badge">{col.issues.length}</span> : null}
-                </button>
-                {col.numeric ? (
+              <div key={col.key} className="col-block">
+                <div className={cx('col-row', isOpen && 'is-open')}>
                   <button
-                    className={cx('red-toggle', redColumns.has(i) && 'is-on')}
-                    onClick={() => onToggleRedColumn(i)}
-                    aria-pressed={redColumns.has(i)}
-                    title={
-                      redColumns.has(i)
-                        ? '不再标红这一列的异常值'
-                        : '把这一列的异常值标红（可多选）'
-                    }
+                    className={cx('col-item', i === selected && 'is-active')}
+                    onClick={() => onSelect(i)}
+                    title={col.issues.map((x) => x.message).join('；') || '没有发现问题'}
                   >
-                    ●
+                    <i className="col-dot" style={{ background: DOT_COLOR[tone] }} />
+                    <span className="col-name">{col.name}</span>
+                    <span className={cx('type-pill', `type-${col.type}`)}>{TYPE_SHORT[col.type]}</span>
+                    {col.issues.length > 0 ? <span className="col-badge">{col.issues.length}</span> : null}
                   </button>
+                  {col.numeric ? (
+                    <button
+                      className={cx('red-toggle', redColumns.has(i) && 'is-on')}
+                      onClick={() => onToggleRedColumn(i)}
+                      aria-pressed={redColumns.has(i)}
+                      title={
+                        redColumns.has(i)
+                          ? '不再标红这一列的异常值'
+                          : '把这一列的异常值标红（可多选）'
+                      }
+                    >
+                      ●
+                    </button>
+                  ) : null}
+                </div>
+
+                {/* 二级菜单：选中列的异常值落在哪几行，点一条直接跳过去 */}
+                {isOpen ? (
+                  <div className="col-sub">
+                    <div className="col-sub-head">
+                      异常值 {int(outliers.length)} 个 · 点一条跳到对应行
+                      {outliers.length > 20 ? '（列出前 20 个）' : ''}
+                    </div>
+                    {outliers.slice(0, 20).map((o) => (
+                      <button
+                        key={o.row}
+                        className="col-sub-item"
+                        onClick={() => onJumpRow(o.row)}
+                        title={`跳到第 ${o.row + 1} 行`}
+                      >
+                        <span className="col-sub-row">第 {int(o.row + 1)} 行</span>
+                        <span className="col-sub-val">{formatNumber(o.value)}</span>
+                      </button>
+                    ))}
+                  </div>
                 ) : null}
               </div>
             )

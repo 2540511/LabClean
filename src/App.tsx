@@ -107,6 +107,8 @@ export default function App() {
   const [hist, setHist] = useState<HistSetting>(DEFAULT_HIST)
   /** 点异常值列表后要高亮的行 */
   const [focusRow, setFocusRow] = useState<number | null>(null)
+  /** 每次跳转加一：连点同一行也能重新滚过去 */
+  const [focusSeq, setFocusSeq] = useState(0)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   /** 最近一次导出的文件：浏览器拦截自动下载时，用户可以点这个链接自己另存 */
@@ -459,6 +461,12 @@ export default function App() {
 
   const clearRows = useCallback(() => setSelectedRows(new Set()), [])
 
+  /** 跳到某一行：表格滚过去并高亮 */
+  const jumpToRow = useCallback((row: number) => {
+    setFocusRow(row)
+    setFocusSeq((n) => n + 1)
+  }, [])
+
   const deleteSelectedRows = useCallback(() => {
     if (selectedRows.size === 0) return
     // 行号必须排序：重放时按这份下标删，顺序不影响结果，但日志读起来更清楚
@@ -804,6 +812,8 @@ export default function App() {
             onSelect={setSelected}
             redColumns={redColumns}
             onToggleRedColumn={toggleRedColumn}
+            outliers={selectedOutliers}
+            onJumpRow={jumpToRow}
             onSelectSource={setActiveId}
             onRemoveSource={removeSource}
             onAddSource={() => inputRef.current?.click()}
@@ -850,6 +860,7 @@ export default function App() {
               redColumns={redColumns}
               outlierSettings={outlierSettings}
               focusRow={focusRow}
+              focusSeq={focusSeq}
               compare={compareSource}
               selectedRows={selectedRows}
               onToggleRow={toggleRow}
@@ -875,8 +886,6 @@ export default function App() {
             onRedo={redo}
             onOpenTemplates={() => setTplOpen(true)}
             onOpenFuzzy={() => setFuzzyOpen(true)}
-            outlierRows={selectedOutliers}
-            onFocusRow={(row) => setFocusRow(row)}
           />
         </div>
       ) : (

@@ -2083,57 +2083,6 @@ select {
   font-weight: 600;
 }
 
-/* ---------- 异常值行列表 ---------- */
-.outlier-rows {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--line);
-}
-.or-head {
-  margin-bottom: 6px;
-  font-size: 11.5px;
-  color: var(--muted);
-}
-.or-head b {
-  color: #b91c1c;
-}
-.or-list {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  max-height: 136px;
-  overflow-y: auto;
-}
-.or-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 3px 8px;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
-  background: #fff7f7;
-  font-size: 11.5px;
-  color: var(--ink-2);
-  cursor: pointer;
-}
-.or-item:hover {
-  background: #fee2e2;
-  border-color: #f87171;
-}
-.or-row {
-  color: var(--muted);
-}
-.or-val {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.or-more {
-  margin-top: 4px;
-  font-size: 10.5px;
-  color: var(--faint);
-}
-
 /* 定位到某一行时的高亮 */
 .tbody > .tr.tr-focus {
   background: #eff6ff !important;
@@ -2191,4 +2140,57 @@ select {
   color: var(--accent);
   background: var(--accent-weak);
   font-weight: 600;
+}
+
+/* ---------- 字段卡片下的二级菜单（异常值行） ---------- */
+.col-block {
+  display: flex;
+  flex-direction: column;
+}
+.col-block + .col-block {
+  margin-top: 1px;
+}
+.col-row.is-open .col-item {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.col-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 4px 0;
+  padding: 5px 6px 6px;
+  border: 1px solid #fecaca;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  background: #fffafa;
+}
+.col-sub-head {
+  padding: 0 2px 3px;
+  font-size: 10.5px;
+  color: #b91c1c;
+}
+.col-sub-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 7px;
+  border: 1px solid #fecaca;
+  border-radius: 5px;
+  background: #fff;
+  font-size: 11px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.col-sub-item:hover {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+.col-sub-row {
+  color: var(--muted);
+}
+.col-sub-val {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }

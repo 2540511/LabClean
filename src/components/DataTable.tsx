@@ -25,6 +25,8 @@ interface Props {
   outlierSettings: OutlierSettings
   /** 需要滚动定位并高亮的行（点异常值列表时设置） */
   focusRow: number | null
+  /** 每次跳转递增，连点同一行也能重新滚动过去 */
+  focusSeq: number
   /** 原始数据 + 行来源映射，用来标出被清洗改动过的单元格 */
   compare?: { rows: CellValue[][]; origins: number[] } | null
   /** 手动点选的行（0 基下标），用于逐行删除 */
@@ -41,6 +43,7 @@ export function DataTable({
   redColumns,
   outlierSettings,
   focusRow,
+  focusSeq,
   compare,
   selectedRows,
   onToggleRow,
@@ -76,7 +79,7 @@ export function DataTable({
     const target = Math.max(0, focusRow * ROW_H - el.clientHeight / 2 + ROW_H / 2)
     el.scrollTop = target
     setScrollTop(target)
-  }, [focusRow])
+  }, [focusRow, focusSeq])
 
   const widths = useMemo(
     () =>
