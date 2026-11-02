@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseCsv } from '../src/core/csv'
-import { buildDataset, rebuildDataset } from '../src/core/profile'
+import { buildDataset, findHeaderRow, rebuildDataset } from '../src/core/profile'
 import { classify, coerceNumber, formatCell } from '../src/core/value'
 import { countFormulaOnly, readWorkbook } from '../src/core/xlsx-io'
 import { handleRequest } from '../src/workers/table.worker'
@@ -562,6 +562,46 @@ console.log('\n[14] 模板：重命名后引用新列名（回归）')
     ds.columns,
   )
   eq('列名不存在时跳过', specs3.length, 0)
+}
+
+console.log('\n[15] 表头识别（多行标题的真实报表）')
+{
+  // 复刻真实文件结构：标题行 + 副标题行 + 空行 + 表头 + 数据 + 汇总行
+  const csv = [
+    '学生成绩明细,,,,,',
+    '45 名学生 · 3 个班级 · 5 门科目,,,,,',
+    ',,,,,',
+    '学号,姓名,性别,班级,语文,总分',
+    '20260101,杨浩然,男,高一(1)班,82,357',
+    '20260102,魏志强,男,高一(1)班,85,432',
+    '20260103,常思远,男,高一(1)班,80,427',
+    '年级平均,,,高一,82.3,405.3',
+  ].join('\n')
+  const ds = buildDataset('成绩.xlsx', '数据', parseCsv(csv))
+  eq('表头认在第 4 行（下标 3）', findHeaderRow(parseCsv(csv)), 3)
+  eq('列数', ds.meta.colCount, 6)
+  eq('列名', ds.columns.map((c) => c.name), ['学号', '姓名', '性别', '班级', '语文', '总分'])
+  eq('行数（3 名学生 + 1 汇总行）', ds.meta.rowCount, 4)
+  // 学号列里混进了「年级平均」，3 数字 : 1 文本 → 低于 90% 阈值，按文本处理
+  eq('第一行数据没有被标题污染', ds.rows[0].slice(0, 2), ['20260101', '杨浩然'])
+  check(
+    '最后一行是汇总行时给出提示',
+    ds.meta.notes.some((n) => n.includes('汇总行')),
+    JSON.stringify(ds.meta.notes),
+  )
+
+  // 回归：常见形态不能被改坏
+  eq('普通表格（表头在第 1 行）', buildDataset('a.csv', 's', parseCsv('a,b,c\n1,2,3\n')).meta.colCount, 3)
+  eq(
+    '单行标题 + 表头',
+    buildDataset('b.csv', 's', parseCsv('销售报表,,,\na,b,c\n1,2,3\n')).columns.map((c) => c.name),
+    ['a', 'b', 'c'],
+  )
+  eq(
+    '单列表格（没有结构线索时退回第一个非空行）',
+    buildDataset('c.csv', 's', parseCsv('值\n1\n2\n')).columns.map((c) => c.name),
+    ['值'],
+  )
 }
 
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)

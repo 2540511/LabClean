@@ -18,6 +18,9 @@ const DUP_SCAN_LIMIT = 300_000
 /** 异常值判定：修正 Z 分数阈值（Iglewicz & Hoaglin 推荐 3.5） */
 const OUTLIER_Z = 3.5
 
+/** 汇总行的常见开头（合计 / 年级平均 / 小计 …），只用来提示，不自动删除 */
+const SUMMARY_ROW_RE = /^(合计|总计|小计|汇总|平均|总计|年级平均|全班平均|本页合计)/
+
 export interface RawSheet {
   name: string
   rows: CellValue[][]
@@ -270,16 +273,50 @@ function sanitizeHeaders(header: CellValue[], width: number): string[] {
  * 表头判定：跳过开头的空行和「只有一个格子的标题行」。
  * 只在这两种很确定的形态下跳，避免误吃真正的数据行。
  */
+/**
+ * 找表头行。
+ *
+ * 真实表格长什么样，这里踩过坑：
+ *
+ *   ［学生成绩明细］                      ← 标题（1 格）
+ *   ［45 名学生 · 3 个班级 · …］          ← 副标题（1 格）
+ *   （空行）
+ *   ［学号］［姓名］…［等级］              ← 真表头（14 格）
+ *   ［20260101］［杨浩然］…                ← 数据
+ *
+ * 旧逻辑只处理「单格标题 + 下一行≥3 格」，遇到连续两行标题就失效，
+ * 于是把标题当表头，整张表塌成 1 列。
+ *
+ * 现在的判断依据是「这一行的格子数是不是接近全表最宽的那一行」：
+ * 标题、副标题、说明段落都远窄于真正的表头和数据行。
+ */
+const HEADER_SCAN_LIMIT = 200
+
 export function findHeaderRow(raw: CellValue[][]): number {
-  let i = 0
-  while (i < raw.length && raw[i].every((c) => isBlank(c))) i++
-  while (i < raw.length - 1) {
-    const cur = countNonEmpty(raw[i])
-    const next = countNonEmpty(raw[i + 1])
-    if (cur === 1 && next >= 3) i++
-    else break
+  // 兜底：第一个非空行
+  let firstNonBlank = 0
+  while (firstNonBlank < raw.length && (raw[firstNonBlank]?.every((c) => isBlank(c)) ?? true)) {
+    firstNonBlank++
   }
-  return i
+  if (firstNonBlank >= raw.length) return Math.max(0, raw.length - 1)
+
+  const limit = Math.min(raw.length, HEADER_SCAN_LIMIT)
+  const counts: number[] = []
+  for (let i = 0; i < limit; i++) counts.push(countNonEmpty(raw[i]))
+
+  const maxCount = Math.max(...counts)
+  // 整张表都只有 1 格 → 没有可依据的结构，退回第一个非空行
+  if (maxCount < 2) return firstNonBlank
+
+  // 阈值取下限 2 和「最宽行的 70%」，标题类窄行都会被排除。
+  // 注意：不要再加「下一行也必须像表格」这种条件 ——
+  // 第一行数据恰好有空值时（如 姓名,城市 后跟 王五,(空)），会被误判成表头在下面。
+  const threshold = Math.max(2, Math.ceil(maxCount * 0.7))
+
+  for (let i = 0; i < limit; i++) {
+    if (counts[i] >= threshold) return i
+  }
+  return firstNonBlank
 }
 
 function makeId(): string {
@@ -518,6 +555,16 @@ export function profileRows(
     notes.push(
       `这个工作表有 ${formulaOnly.toLocaleString()} 个单元格是公式，但文件里没有保存计算结果，读出来是空的 —— 用 Excel / WPS 打开后保存一次，再重新导入即可`,
     )
+  }
+
+  // 最后一行像是「合计 / 平均 / 小计」这类汇总行：不自动删，只提醒
+  if (n > 2) {
+    const lastText = rawText(rows[n - 1][0] ?? null).trim()
+    if (SUMMARY_ROW_RE.test(lastText)) {
+      notes.push(
+        `最后一行「${lastText.slice(0, 12)}」看起来是汇总行（合计/平均之类），如果它不该参与统计，可以用「行筛选」把它排除`,
+      )
+    }
   }
 
   return {
