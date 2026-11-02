@@ -519,7 +519,7 @@ select {
   background: #e2e8f0;
 }
 .dot-outlier {
-  background: #fbbf24;
+  background: #ef4444;
 }
 
 .table-scroll {
@@ -554,7 +554,7 @@ select {
   border-bottom: 1px solid var(--line);
 }
 .tr-outlier {
-  background: #fffbeb !important;
+  background: #fff6f6 !important;
 }
 .td {
   flex: none;
@@ -607,9 +607,13 @@ select {
 .td-empty {
   color: #cbd5e1;
 }
+/* 异常值：给「格子」上色，文字保持正常颜色，扫一眼就能定位又不刺眼 */
 .td-outlier {
-  background: #fef3c7;
-  color: #b45309;
+  background: #fee2e2;
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px #fecaca;
+}
+.td-outlier.td-num {
   font-weight: 600;
 }
 .is-selected {
