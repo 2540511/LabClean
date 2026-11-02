@@ -32,7 +32,8 @@ import {
 import type { Dataset } from './core/types'
 import { buildWorkbook, downloadBlob, releaseBlobUrl, workbookToBlob } from './core/xlsx-io'
 import { analyzeColumn } from './lib/analyze'
-import type { OutlierMode } from './lib/analyze'
+import { DEFAULT_OUTLIER_SETTINGS, isOutlierValue } from './lib/analyze'
+import type { OutlierMode, OutlierSettings } from './lib/analyze'
 import { computeDiff } from './lib/diff'
 import { bytes, nowStamp } from './lib/format'
 import { TableClient } from './lib/tableClient'
@@ -88,9 +89,11 @@ export default function App() {
   const [selected, setSelected] = useState(0)
   /** 表格里手动点选的行（0 基下标），用于逐行删除 */
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set())
-  /** 哪些列要把异常值标红：当前列 / 全部数值列 / 自定义 / 关闭 */
-  const [outlierMode, setOutlierMode] = useState<OutlierMode>('current')
+  /** 哪些列要把异常值标红：默认全部数值列，导入后一眼能看到异常 */
+  const [outlierMode, setOutlierMode] = useState<OutlierMode>('all')
   const [customRedCols, setCustomRedCols] = useState<Set<number>>(new Set())
+  /** 判定异常的规则，用户可以随时改 */
+  const [outlierSettings, setOutlierSettings] = useState<OutlierSettings>(DEFAULT_OUTLIER_SETTINGS)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   /** 最近一次导出的文件：浏览器拦截自动下载时，用户可以点这个链接自己另存 */
@@ -562,6 +565,21 @@ export default function App() {
     return new Set([selected])
   }, [dataset, outlierMode, customRedCols, selected])
 
+  /** 按当前设置统计异常值总数，让用户在弹层里立刻看到「阈值调小 → 变多」 */
+  const outlierCount = useMemo(() => {
+    if (!dataset || redColumns.size === 0) return 0
+    if (dataset.rows.length > 500_000) return -1
+    let total = 0
+    for (const c of redColumns) {
+      const col = dataset.columns[c]
+      if (!col?.numeric) continue
+      for (const row of dataset.rows) {
+        if (isOutlierValue(row[c] ?? null, col, outlierSettings)) total++
+      }
+    }
+    return total
+  }, [dataset, redColumns, outlierSettings])
+
   /** 点字段列表里的小红点：切换某一列是否标红，并自动进入「自定义」模式 */
   const toggleRedColumn = useCallback(
     (index: number) => {
@@ -777,6 +795,9 @@ export default function App() {
               redColumns={redColumns}
               outlierMode={outlierMode}
               onOutlierMode={setOutlierMode}
+              outlierSettings={outlierSettings}
+              onOutlierSettings={setOutlierSettings}
+              outlierCount={outlierCount}
               compare={compareSource}
               selectedRows={selectedRows}
               onToggleRow={toggleRow}

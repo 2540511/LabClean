@@ -1937,20 +1937,118 @@ select {
 .red-toggle.is-on {
   color: #ef4444;
 }
-.outlier-mode {
+
+/* ---------- 异常标红设置弹层 ---------- */
+.outlier-box {
+  position: relative;
+  flex: none;
+}
+.outlier-trigger {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.select-tiny {
-  height: 22px;
-  padding: 0 4px;
-  font-size: 11px;
-  border-radius: 6px;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
   border: 1px solid var(--line);
+  border-radius: 8px;
   background: #fff;
   color: var(--ink-2);
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.outlier-trigger:hover {
+  border-color: #fca5a5;
+  background: #fffafa;
+}
+.outlier-trigger.is-on {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+.outlier-trigger .dot {
+  margin-left: 0;
+}
+.outlier-trigger-sub {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.outlier-caret {
+  color: var(--faint);
+  font-size: 9px;
+}
+.outlier-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: 320px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pop-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.pop-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.pop-label b {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 2px;
+  background: #f1f5f9;
+  border-radius: 8px;
+}
+.seg-btn {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seg-btn:hover {
+  color: var(--ink-2);
+}
+.seg-btn.is-active {
+  background: #fff;
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+.pop-range {
+  width: 100%;
+  accent-color: #ef4444;
+}
+.pop-hint {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--faint);
+}
+.pop-stat {
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 11px;
+  color: var(--muted);
+}
+.pop-stat b {
+  color: #b91c1c;
 }

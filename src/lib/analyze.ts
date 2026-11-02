@@ -110,16 +110,59 @@ export function classifySeverity(score: number): 'good' | 'warn' | 'bad' {
   return 'bad'
 }
 
-/** 表格里「哪些列标红异常值」的四种模式 */
+/** 表格里「哪些列标红异常值」的四种范围 */
 export type OutlierMode = 'current' | 'all' | 'none' | 'custom'
 
+/** 判定「异常」的规则，用户可以改 */
+export interface OutlierSettings {
+  /** mad = 稳健 Z 分数（中位数 + MAD）；iqr = 四分位距 */
+  method: 'mad' | 'iqr'
+  /** mad 时是 Z 阈值（常用 3.5）；iqr 时是倍数（常用 1.5） */
+  k: number
+}
+
+export const DEFAULT_OUTLIER_SETTINGS: OutlierSettings = { method: 'mad', k: 3.5 }
+
+export const OUTLIER_K_RANGE: Record<OutlierSettings['method'], { min: number; max: number; step: number }> = {
+  mad: { min: 1.5, max: 6, step: 0.1 },
+  iqr: { min: 1, max: 3, step: 0.1 },
+}
+
 /**
- * 判断单个单元格是不是异常值。
- * 直接复用体检时算好的稳健上下界（中位数 + MAD），不需要再扫全表，
- * 所以表格里可以同时对任意多列标红。
+ * 按当前设置算出某一列的异常上下界。
+ *
+ * 直接复用体检时存下的中位数 / MAD / 四分位数，**不需要重新扫表**，
+ * 所以拖动阈值滑块能立刻在表格里看到变化。
  */
-export function isOutlierValue(v: CellValue, col: Column): boolean {
-  const stats = col.numeric
-  if (!stats || typeof v !== 'number') return false
-  return v < stats.lowFence || v > stats.highFence
+export function outlierFences(col: Column, settings: OutlierSettings): [number, number] | null {
+  const s = col.numeric
+  if (!s) return null
+  const iqr = s.q3 - s.q1
+
+  if (settings.method === 'iqr') {
+    if (!(iqr > 0)) return null
+    return [s.q1 - settings.k * iqr, s.q3 + settings.k * iqr]
+  }
+
+  // 稳健 Z：|x − median| / (MAD / 0.6745) > k
+  if (s.mad > 0) {
+    const span = (settings.k * s.mad) / 0.6745
+    return [s.median - span, s.median + span]
+  }
+  // MAD 为 0（超过一半的值相同）时退到 IQR，和体检里的处理一致
+  if (iqr > 0) return [s.q1 - 1.5 * iqr, s.q3 + 1.5 * iqr]
+  return null
+}
+
+/** 判断单个单元格是不是异常值（按用户当前设置） */
+export function isOutlierValue(
+  v: CellValue,
+  col: Column,
+  settings: OutlierSettings = DEFAULT_OUTLIER_SETTINGS,
+): boolean {
+  if (typeof v !== 'number') return false
+  const fences = outlierFences(col, settings)
+  if (!fences) return false
+  const [low, high] = fences
+  return v < low || v > high
 }

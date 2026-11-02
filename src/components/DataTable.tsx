@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CellValue, Dataset } from '../core/types'
 import { formatCell, isBlank } from '../core/value'
-import { isOutlierValue, type OutlierMode } from '../lib/analyze'
+import { isOutlierValue, type OutlierMode, type OutlierSettings } from '../lib/analyze'
 import { sameCell } from '../lib/diff'
 import { cx, int } from '../lib/format'
+import { OutlierControls } from './OutlierControls'
 
 const ROW_H = 30
 const IDX_W = 64
@@ -24,6 +25,10 @@ interface Props {
   redColumns: Set<number>
   outlierMode: OutlierMode
   onOutlierMode: (mode: OutlierMode) => void
+  outlierSettings: OutlierSettings
+  onOutlierSettings: (next: OutlierSettings) => void
+  /** 按当前设置统计出来的异常值总数（-1 = 数据太大未统计） */
+  outlierCount: number
   /** 原始数据 + 行来源映射，用来标出被清洗改动过的单元格 */
   compare?: { rows: CellValue[][]; origins: number[] } | null
   /** 手动点选的行（0 基下标），用于逐行删除 */
@@ -40,6 +45,9 @@ export function DataTable({
   redColumns,
   outlierMode,
   onOutlierMode,
+  outlierSettings,
+  onOutlierSettings,
+  outlierCount,
   compare,
   selectedRows,
   onToggleRow,
@@ -134,20 +142,14 @@ export function DataTable({
             <span className="table-tip">点一行可选中，再点一次取消</span>
           </>
         )}
-        <label className="outlier-mode" title="选择哪些列要把异常值标红">
-          异常标红
-          <select
-            className="select select-tiny"
-            value={outlierMode}
-            onChange={(e) => onOutlierMode(e.target.value as OutlierMode)}
-            aria-label="异常值标红范围"
-          >
-            <option value="current">当前列</option>
-            <option value="all">全部数值列</option>
-            <option value="custom">自定义</option>
-            <option value="none">关闭</option>
-          </select>
-        </label>
+        <OutlierControls
+          mode={outlierMode}
+          onMode={onOutlierMode}
+          settings={outlierSettings}
+          onSettings={onOutlierSettings}
+          count={outlierCount}
+          redColumnCount={redColumns.size}
+        />
       </div>
 
       <div
@@ -181,7 +183,7 @@ export function DataTable({
               let isOutlierRow = false
               for (const c of redColumns) {
                 const col = columns[c]
-                if (col && isOutlierValue(row[c] ?? null, col)) {
+                if (col && isOutlierValue(row[c] ?? null, col, outlierSettings)) {
                   isOutlierRow = true
                   break
                 }
@@ -206,7 +208,7 @@ export function DataTable({
                   {columns.map((col, c) => {
                     const v = row[c] ?? null
                     const empty = isBlank(v)
-                    const isOutlierCell = redColumns.has(c) && isOutlierValue(v, col)
+                    const isOutlierCell = redColumns.has(c) && isOutlierValue(v, col, outlierSettings)
                     const sourceRow = compare ? compare.rows[compare.origins[r]] : undefined
                     const oldValue = compare && sourceRow ? (sourceRow[c] ?? null) : null
                     const changed = compare && sourceRow ? !sameCell(oldValue, v) : false
