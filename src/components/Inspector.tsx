@@ -4,6 +4,7 @@ import { FILTER_LABEL, resolveFillValue, type FillStrategy, type FilterOp } from
 import type { OpSpec, StepRecord } from '../core/pipeline'
 import type { DatasetDiff } from '../lib/diff'
 import { cx, int, num, pct } from '../lib/format'
+import { formatNumber } from '../core/value'
 
 const TYPE_LABEL: Record<string, string> = {
   number: '数值',
@@ -29,6 +30,9 @@ interface Props {
   onRedo: () => void
   onOpenTemplates: () => void
   onOpenFuzzy: () => void
+  /** 选中列的异常值行（点一条跳过去） */
+  outlierRows: { row: number; value: number }[]
+  onFocusRow: (row: number) => void
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'warn' | 'bad' | 'good' }) {
@@ -90,6 +94,8 @@ export function Inspector({
   onRedo,
   onOpenTemplates,
   onOpenFuzzy,
+  outlierRows,
+  onFocusRow,
 }: Props) {
   const [strategy, setStrategy] = useState<FillStrategy>('median')
   const [filterOp, setFilterOp] = useState<FilterOp>('gt')
@@ -193,6 +199,25 @@ export function Inspector({
                   <span className="top-count">{int(t.count)}</span>
                 </div>
               ))}
+            </div>
+          ) : null}
+
+          {outlierRows.length > 0 ? (
+            <div className="outlier-rows">
+              <div className="or-head">
+                异常值 <b>{int(outlierRows.length)}</b> 个 · 点一条跳到对应行
+              </div>
+              <div className="or-list">
+                {outlierRows.slice(0, 20).map((o) => (
+                  <button key={o.row} className="or-item" onClick={() => onFocusRow(o.row)}>
+                    <span className="or-row">第 {o.row + 1} 行</span>
+                    <span className="or-val">{formatNumber(o.value)}</span>
+                  </button>
+                ))}
+              </div>
+              {outlierRows.length > 20 ? (
+                <div className="or-more">还有 {int(outlierRows.length - 20)} 个未列出</div>
+              ) : null}
             </div>
           ) : null}
 

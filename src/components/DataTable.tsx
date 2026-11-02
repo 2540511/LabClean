@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CellValue, Dataset } from '../core/types'
 import { formatCell, isBlank } from '../core/value'
-import { isOutlierValue, type OutlierMode, type OutlierSettings } from '../lib/analyze'
+import { isOutlierValue, type OutlierSettings } from '../lib/analyze'
 import { sameCell } from '../lib/diff'
 import { cx, int } from '../lib/format'
-import { OutlierControls } from './OutlierControls'
 
 const ROW_H = 30
 const IDX_W = 64
@@ -23,12 +22,9 @@ interface Props {
   onSelect: (index: number) => void
   /** 哪些列需要把异常值标红 */
   redColumns: Set<number>
-  outlierMode: OutlierMode
-  onOutlierMode: (mode: OutlierMode) => void
   outlierSettings: OutlierSettings
-  onOutlierSettings: (next: OutlierSettings) => void
-  /** 按当前设置统计出来的异常值总数（-1 = 数据太大未统计） */
-  outlierCount: number
+  /** 需要滚动定位并高亮的行（点异常值列表时设置） */
+  focusRow: number | null
   /** 原始数据 + 行来源映射，用来标出被清洗改动过的单元格 */
   compare?: { rows: CellValue[][]; origins: number[] } | null
   /** 手动点选的行（0 基下标），用于逐行删除 */
@@ -43,11 +39,8 @@ export function DataTable({
   selected,
   onSelect,
   redColumns,
-  outlierMode,
-  onOutlierMode,
   outlierSettings,
-  onOutlierSettings,
-  outlierCount,
+  focusRow,
   compare,
   selectedRows,
   onToggleRow,
@@ -74,6 +67,16 @@ export function DataTable({
       setScrollTop(0)
     }
   }, [dataset])
+
+  // 点「异常值列表」里的某一行时，把表格滚到那一行
+  useEffect(() => {
+    if (focusRow === null) return
+    const el = scrollRef.current
+    if (!el) return
+    const target = Math.max(0, focusRow * ROW_H - el.clientHeight / 2 + ROW_H / 2)
+    el.scrollTop = target
+    setScrollTop(target)
+  }, [focusRow])
 
   const widths = useMemo(
     () =>
@@ -142,14 +145,6 @@ export function DataTable({
             <span className="table-tip">点一行可选中，再点一次取消</span>
           </>
         )}
-        <OutlierControls
-          mode={outlierMode}
-          onMode={onOutlierMode}
-          settings={outlierSettings}
-          onSettings={onOutlierSettings}
-          count={outlierCount}
-          redColumnCount={redColumns.size}
-        />
       </div>
 
       <div
@@ -197,6 +192,7 @@ export function DataTable({
                     r % 2 === 1 && 'tr-alt',
                     isOutlierRow && 'tr-outlier',
                     selectedRows.has(r) && 'tr-picked',
+                    focusRow === r && 'tr-focus',
                   )}
                   style={{ top: r * ROW_H, height: ROW_H }}
                   onClick={() => onToggleRow(r)}

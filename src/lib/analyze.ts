@@ -37,7 +37,11 @@ function reservoirPush(arr: number[], value: number, seen: number): void {
  * 单次遍历拿到：直方图分箱、抽样散点、异常值所在行。
  * 上百万行也只扫一遍，且不额外占用与行数成正比的内存。
  */
-export function analyzeColumn(rows: CellValue[][], col: Column): ColumnAnalysis | null {
+export function analyzeColumn(
+  rows: CellValue[][],
+  col: Column,
+  binCountOverride?: number,
+): ColumnAnalysis | null {
   const stats = col.numeric
   if (col.type !== 'number' || !stats || !Number.isFinite(stats.min) || !Number.isFinite(stats.max)) {
     return null
@@ -51,7 +55,10 @@ export function analyzeColumn(rows: CellValue[][], col: Column): ColumnAnalysis 
   const lo = Number.isFinite(stats.lowFence) ? Math.max(min, stats.lowFence) : min
   const hi = Number.isFinite(stats.highFence) ? Math.min(max, stats.highFence) : max
   const span = Math.max(hi - lo, 0)
-  const binCount = Math.max(10, Math.min(40, Math.round(Math.sqrt(Math.max(rows.length, 1)))))
+  const binCount =
+    binCountOverride && binCountOverride > 1
+      ? Math.round(binCountOverride)
+      : Math.max(10, Math.min(40, Math.round(Math.sqrt(Math.max(rows.length, 1)))))
 
   const bins: HistBin[] = []
   for (let i = 0; i < binCount; i++) {

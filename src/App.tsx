@@ -6,6 +6,7 @@ import { EmptyState } from './components/EmptyState'
 import { FuzzyDialog } from './components/FuzzyDialog'
 import { Inspector } from './components/Inspector'
 import { Rail } from './components/Rail'
+import { SettingsDialog } from './components/SettingsDialog'
 import { TemplateDialog, type ApplyScope } from './components/TemplateDialog'
 import { resolveFillValue } from './core/clean'
 import { resolveCurrent, sourceMetrics, type DataSource } from './core/compare'
@@ -94,6 +95,12 @@ export default function App() {
   const [customRedCols, setCustomRedCols] = useState<Set<number>>(new Set())
   /** 判定异常的规则，用户可以随时改 */
   const [outlierSettings, setOutlierSettings] = useState<OutlierSettings>(DEFAULT_OUTLIER_SETTINGS)
+  /** 设置面板（异常标红 / 直方图分箱） */
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  /** 直方图分箱数；null = 自动 */
+  const [histogramBins, setHistogramBins] = useState<number | null>(null)
+  /** 点异常值列表后要高亮的行 */
+  const [focusRow, setFocusRow] = useState<number | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   /** 最近一次导出的文件：浏览器拦截自动下载时，用户可以点这个链接自己另存 */
@@ -278,6 +285,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search)
     if (params.get('demo') === '1') loadDemo()
     if (params.get('dialog') === 'templates') setTplOpen(true)
+    if (params.get('settings') === '1') setSettingsOpen(true)
     if (params.get('dialog') === 'fuzzy') {
       setFuzzyOpen(true)
       setFuzzyAuto(params.get('autoscan') === '1')
@@ -452,6 +460,7 @@ export default function App() {
   // 数据一变（任何清洗动作、撤销、切数据源），原来的行号就失效了，必须清空
   useEffect(() => {
     setSelectedRows(new Set())
+    setFocusRow(null)
   }, [dataset])
 
   useEffect(() => {
@@ -548,8 +557,28 @@ export default function App() {
     if (!dataset) return null
     const col = dataset.columns[selected]
     if (!col) return null
-    return analyzeColumn(dataset.rows, col)
-  }, [dataset, selected])
+    return analyzeColumn(dataset.rows, col, histogramBins ?? undefined)
+  }, [dataset, selected, histogramBins])
+
+  /** 自动模式下实际会用的箱数（给设置面板显示） */
+  const autoBinCount = dataset
+    ? Math.max(10, Math.min(40, Math.round(Math.sqrt(Math.max(dataset.rows.length, 1)))))
+    : 10
+
+  /** 选中列里所有异常值所在的行（点一条可以跳过去） */
+  const selectedOutliers = useMemo(() => {
+    if (!dataset) return []
+    const col = dataset.columns[selected]
+    if (!col?.numeric) return []
+    const out: { row: number; value: number }[] = []
+    for (let r = 0; r < dataset.rows.length && out.length < 500; r++) {
+      const v = dataset.rows[r][selected]
+      if (typeof v === 'number' && isOutlierValue(v, col, outlierSettings)) {
+        out.push({ row: r, value: v })
+      }
+    }
+    return out
+  }, [dataset, selected, outlierSettings])
 
   /** 解析成「具体要标红的列下标集合」 */
   const redColumns = useMemo(() => {
@@ -686,6 +715,9 @@ export default function App() {
         <button className="btn" onClick={() => inputRef.current?.click()} disabled={!!busy}>
           导入文件
         </button>
+        <button className="btn" onClick={() => setSettingsOpen(true)} title="异常标红 / 直方图分箱">
+          显示设置
+        </button>
 
         {active && view === 'table' ? (
           <>
@@ -793,11 +825,8 @@ export default function App() {
               selected={selected}
               onSelect={setSelected}
               redColumns={redColumns}
-              outlierMode={outlierMode}
-              onOutlierMode={setOutlierMode}
               outlierSettings={outlierSettings}
-              onOutlierSettings={setOutlierSettings}
-              outlierCount={outlierCount}
+              focusRow={focusRow}
               compare={compareSource}
               selectedRows={selectedRows}
               onToggleRow={toggleRow}
@@ -823,6 +852,8 @@ export default function App() {
             onRedo={redo}
             onOpenTemplates={() => setTplOpen(true)}
             onOpenFuzzy={() => setFuzzyOpen(true)}
+            outlierRows={selectedOutliers}
+            onFocusRow={(row) => setFocusRow(row)}
           />
         </div>
       ) : (
@@ -882,6 +913,20 @@ export default function App() {
           }}
         />
       ) : null}
+
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        mode={outlierMode}
+        onMode={setOutlierMode}
+        settings={outlierSettings}
+        onSettings={setOutlierSettings}
+        outlierCount={outlierCount}
+        redColumnCount={redColumns.size}
+        bins={histogramBins}
+        onBins={setHistogramBins}
+        autoBins={autoBinCount}
+      />
 
       <TemplateDialog
         open={tplOpen}

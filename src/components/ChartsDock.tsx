@@ -14,6 +14,24 @@ const AXIS = {
   splitLine: { lineStyle: { color: '#f1f5f9' } },
 }
 
+/**
+ * 数值很大、跨度很小时（如学号 20260101~20260146），
+ * 直接把绝对值格式化会让所有刻度都长一样（全是 20.3M）。
+ * 这时改用「相对最小值的偏移」做刻度，返回要减掉的基准值。
+ */
+function axisBase(bins: { x0: number; x1: number }[]): number {
+  if (bins.length === 0) return 0
+  const base = bins[0].x0
+  const span = bins[bins.length - 1].x1 - base
+  if (!Number.isFinite(base) || !Number.isFinite(span) || span <= 0) return 0
+  if (Math.abs(base) < 1e4) return 0
+  return span / Math.abs(base) <= 0.01 ? base : 0
+}
+
+function baseLabel(base: number): string {
+  return base === 0 ? '' : `刻度 = 实际值 − ${shortNum(base)}`
+}
+
 interface Props {
   dataset: Dataset
   selected: number
@@ -137,6 +155,11 @@ export function ChartsDock({ dataset, selected, analysis }: Props) {
     const ratio = stats.min > 0 ? stats.max / stats.min : Infinity
     const useLog = ratio > 20 && Number.isFinite(ratio)
 
+    // 量级大、跨度小时用相对偏移刻度（否则 y 轴每格都是 20.3M）
+    const span2 = stats.max - stats.min
+    const scatterBase =
+      Math.abs(stats.min) >= 1e4 && span2 > 0 && span2 / Math.abs(stats.min) <= 0.01 ? stats.min : 0
+
     return {
       grid: { left: 48, right: 18, top: 22, bottom: 14 },
       tooltip: {
@@ -151,7 +174,8 @@ export function ChartsDock({ dataset, selected, analysis }: Props) {
         type: useLog ? 'log' : 'value',
         ...AXIS,
         scale: true,
-        axisLabel: { ...AXIS.axisLabel, formatter: shortNum },
+        // 和直方图一样：量级大、跨度小的时候用相对偏移，否则刻度全糊成一个数
+        axisLabel: { ...AXIS.axisLabel, formatter: (v: number) => shortNum(v - scatterBase) },
       },
       series: [
         {
@@ -227,7 +251,11 @@ export function ChartsDock({ dataset, selected, analysis }: Props) {
     <div className="charts-dock">
       <Card
         title={analysis ? '分布直方图' : '高频取值'}
-        sub={analysis ? `分 ${analysis.bins.length} 组` : `Top ${Math.min(10, col.top.length)}`}
+        sub={
+          analysis
+            ? `分 ${analysis.bins.length} 组${baseLabel(axisBase(analysis.bins)) ? ` · ${baseLabel(axisBase(analysis.bins))}` : ''}`
+            : `Top ${Math.min(10, col.top.length)}`
+        }
       >
         {analysis || col.top.length > 0 ? (
           <Chart option={distribOption} />
