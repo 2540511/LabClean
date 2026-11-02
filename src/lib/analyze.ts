@@ -2,6 +2,46 @@ import type { CellValue, Column } from '../core/types'
 
 export type BinKind = 'normal' | 'low' | 'high'
 
+/**
+ * 一列的「正常区间」：上下围栏夹在真实 min/max 之内。
+ * 直方图只在这个区间里分箱，异常值单独成柱，才不会把坐标轴拉爆。
+ */
+export function normalRange(col: Column): [number, number] | null {
+  const stats = col.numeric
+  if (!stats || !Number.isFinite(stats.min) || !Number.isFinite(stats.max)) return null
+  const lo = Number.isFinite(stats.lowFence) ? Math.max(stats.min, stats.lowFence) : stats.min
+  const hi = Number.isFinite(stats.highFence) ? Math.min(stats.max, stats.highFence) : stats.max
+  return [lo, Math.max(lo, hi)]
+}
+
+/** 直方图分箱设置：自动 / 指定组数 / 指定组距 */
+export type HistSetting =
+  | { mode: 'auto' }
+  | { mode: 'count'; n: number }
+  | { mode: 'width'; w: number }
+
+export const DEFAULT_HIST: HistSetting = { mode: 'auto' }
+
+/** 把设置换算成实际组数（组距模式下由区间宽度反推） */
+export function resolveBinCount(
+  setting: HistSetting,
+  col: Column,
+  rowCount: number,
+): number {
+  if (setting.mode === 'count') {
+    return Math.max(2, Math.min(200, Math.round(setting.n)))
+  }
+  if (setting.mode === 'width') {
+    const range = normalRange(col)
+    if (!range || setting.w <= 0) {
+      return Math.max(10, Math.min(40, Math.round(Math.sqrt(Math.max(rowCount, 1)))))
+    }
+    const n = Math.round((range[1] - range[0]) / setting.w)
+    return Math.max(2, Math.min(200, n))
+  }
+  return Math.max(10, Math.min(40, Math.round(Math.sqrt(Math.max(rowCount, 1)))))
+}
+
 export interface HistBin {
   x0: number
   x1: number
@@ -52,8 +92,7 @@ export function analyzeColumn(
 
   // 关键：分箱只覆盖「正常区间」（上下围栏之内），异常值单独归到两端。
   // 否则一个 999 之类的大值会把整个坐标轴拉长，正常数据全挤成一根柱子。
-  const lo = Number.isFinite(stats.lowFence) ? Math.max(min, stats.lowFence) : min
-  const hi = Number.isFinite(stats.highFence) ? Math.min(max, stats.highFence) : max
+  const [lo, hi] = normalRange(col) ?? [min, max]
   const span = Math.max(hi - lo, 0)
   const binCount =
     binCountOverride && binCountOverride > 1

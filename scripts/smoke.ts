@@ -19,6 +19,7 @@ import {
 } from '../src/core/clean'
 import { replay, type OpSpec } from '../src/core/pipeline'
 import { computeDiff } from '../src/lib/diff'
+import { normalRange, resolveBinCount } from '../src/lib/analyze'
 import { buildCompareSheets, buildReportSheets } from '../src/core/report'
 import { sourceMetrics, type DataSource } from '../src/core/compare'
 import {
@@ -619,6 +620,26 @@ console.log('\n[16] 手动删除行（可撤销）')
   ])
   eq('删行后再筛选', chained.rows.map((r) => r[0]), [3, 4])
   eq('删行不进模板（依赖具体行号）', toTemplateSteps([{ kind: 'dropRows', indices: [0] }], base.columns), [])
+}
+
+console.log('\n[17] 直方图分箱设置')
+{
+  const rows = ['v', ...Array.from({ length: 100 }, (_, i) => String(i + 1))].join('\n')
+  const ds = buildDataset('t.csv', 's', parseCsv(rows))
+  const col = ds.columns[0]
+  eq('按组数：填 10 就是 10 组', resolveBinCount({ mode: 'count', n: 10 }, col, 100), 10)
+  eq('按组数：超上限被夹到 200', resolveBinCount({ mode: 'count', n: 999 }, col, 100), 200)
+  eq('按组数：小于 2 被夹到 2', resolveBinCount({ mode: 'count', n: 1 }, col, 100), 2)
+  eq('自动：√100 = 10 组', resolveBinCount({ mode: 'auto' }, col, 100), 10)
+
+  const range = normalRange(col)
+  check('正常区间能算出来', !!range)
+  if (range) {
+    const expected = Math.round((range[1] - range[0]) / 10)
+    eq('按组距：宽 10 → 组数由区间反推', resolveBinCount({ mode: 'width', w: 10 }, col, 100), expected)
+  }
+  // 组距非法时退回自动，不能除零或产生 NaN 组数
+  check('组距为 0 时退回自动', resolveBinCount({ mode: 'width', w: 0 }, col, 100) === 10)
 }
 
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)

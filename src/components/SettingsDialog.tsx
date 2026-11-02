@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   DEFAULT_OUTLIER_SETTINGS,
   OUTLIER_K_RANGE,
+  type HistSetting,
   type OutlierMode,
   type OutlierSettings,
 } from '../lib/analyze'
@@ -16,6 +17,9 @@ const MODE_LABEL: Record<OutlierMode, string> = {
 
 const MODES: OutlierMode[] = ['all', 'current', 'custom', 'none']
 
+/** 常用的组数 / 组距，一键选 */
+const COUNT_PRESETS = [5, 8, 10, 12, 15, 20, 30]
+
 interface Props {
   open: boolean
   onClose: () => void
@@ -27,11 +31,73 @@ interface Props {
   outlierCount: number
   redColumnCount: number
 
-  /** 分布直方图分箱数；null 表示自动 */
-  bins: number | null
-  onBins: (bins: number | null) => void
-  /** 自动模式下实际用的箱数，用于展示 */
+  hist: HistSetting
+  onHist: (next: HistSetting) => void
+  /** 当前实际分的组数（含自动模式） */
+  effectiveBins: number
+  /** 自动模式会用的组数 */
   autoBins: number
+  /** 一组的宽度 */
+  binWidth: number | null
+  histFrom: number | null
+  histTo: number | null
+}
+
+/**
+ * 数字输入框：允许过程中留空 / 负数，失焦或回车时才提交并夹紧到范围内。
+ * 直接用受控 number 输入会在用户敲字中途被四舍五入，很难填精确值。
+ */
+function NumberField({
+  value,
+  min,
+  max,
+  step = 1,
+  unit,
+  onCommit,
+}: {
+  value: number
+  min: number
+  max: number
+  step?: number
+  unit: string
+  onCommit: (v: number) => void
+}) {
+  const [text, setText] = useState(String(value))
+
+  useEffect(() => {
+    setText(String(value))
+  }, [value])
+
+  const commit = () => {
+    const n = Number(text)
+    if (!Number.isFinite(n) || n <= 0) {
+      setText(String(value))
+      return
+    }
+    const clamped = Math.min(max, Math.max(min, n))
+    setText(String(clamped))
+    if (clamped !== value) onCommit(clamped)
+  }
+
+  return (
+    <span className="num-field">
+      <input
+        type="number"
+        className="num-input"
+        value={text}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+        }}
+        aria-label={unit}
+      />
+      <span className="num-unit">{unit}</span>
+    </span>
+  )
 }
 
 export function SettingsDialog({
@@ -43,11 +109,17 @@ export function SettingsDialog({
   onSettings,
   outlierCount,
   redColumnCount,
-  bins,
-  onBins,
+  hist,
+  onHist,
+  effectiveBins,
   autoBins,
+  binWidth,
+  histFrom,
+  histTo,
 }: Props) {
-  const [tab, setTab] = useState<'outlier' | 'chart'>('outlier')
+  const [tab, setTab] = useState<'outlier' | 'chart'>(() =>
+    new URLSearchParams(window.location.search).get('tab') === 'chart' ? 'chart' : 'outlier',
+  )
 
   useEffect(() => {
     if (!open) return
@@ -61,7 +133,6 @@ export function SettingsDialog({
   if (!open) return null
 
   const range = OUTLIER_K_RANGE[settings.method]
-  const effectiveBins = bins ?? autoBins
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -105,7 +176,9 @@ export function SettingsDialog({
                   ))}
                 </div>
                 {mode === 'custom' ? (
-                  <span className="pop-hint">到左侧字段列表点小圆点增减要标红的列（已选 {redColumnCount} 列）</span>
+                  <span className="pop-hint">
+                    到左侧字段列表点小圆点增减要标红的列（已选 {redColumnCount} 列）
+                  </span>
                 ) : null}
               </div>
 
@@ -156,30 +229,111 @@ export function SettingsDialog({
           ) : (
             <>
               <div className="pop-row">
-                <span className="pop-label">
-                  分箱数 <b>{effectiveBins}</b>
-                  {bins === null ? '（自动）' : ''}
-                </span>
-                <input
-                  type="range"
-                  className="pop-range"
-                  min={5}
-                  max={60}
-                  step={1}
-                  value={effectiveBins}
-                  onChange={(e) => onBins(Number(e.target.value))}
-                  aria-label="直方图分箱数"
-                />
+                <span className="pop-label">分箱方式</span>
+                <div className="seg">
+                  <button
+                    className={cx('seg-btn', hist.mode === 'auto' && 'is-active')}
+                    onClick={() => onHist({ mode: 'auto' })}
+                  >
+                    自动
+                  </button>
+                  <button
+                    className={cx('seg-btn', hist.mode === 'count' && 'is-active')}
+                    onClick={() => onHist({ mode: 'count', n: effectiveBins || autoBins })}
+                  >
+                    按组数
+                  </button>
+                  <button
+                    className={cx('seg-btn', hist.mode === 'width' && 'is-active')}
+                    onClick={() =>
+                      onHist({ mode: 'width', w: binWidth && binWidth > 0 ? Number(binWidth.toPrecision(2)) : 1 })
+                    }
+                  >
+                    按组距
+                  </button>
+                </div>
                 <span className="pop-hint">
-                  箱子越多越细，但每个柱子里的样本也越少；太少会看不出分布形状。
-                  自动模式按 √行数 估算（当前 {autoBins} 箱）。
+                  {hist.mode === 'auto'
+                    ? `当前自动分成 ${autoBins} 组（按 √行数 估算）。`
+                    : hist.mode === 'count'
+                      ? '直接填组数，写实验报告时填「分 10 组」这种正好用。'
+                      : '填每一组的宽度，组数由区间宽度自动算出。'}
                 </span>
               </div>
-              <div className="pop-row">
-                <button className="btn btn-small" onClick={() => onBins(null)} disabled={bins === null}>
-                  恢复自动
-                </button>
-              </div>
+
+              {hist.mode === 'count' ? (
+                <div className="pop-row">
+                  <span className="pop-label">组数</span>
+                  <div className="fill-row">
+                    <NumberField
+                      value={hist.n}
+                      min={2}
+                      max={200}
+                      unit="组"
+                      onCommit={(v) => onHist({ mode: 'count', n: v })}
+                    />
+                    <span className="preset-row">
+                      {COUNT_PRESETS.map((n) => (
+                        <button
+                          key={n}
+                          className={cx('preset-btn', hist.n === n && 'is-active')}
+                          onClick={() => onHist({ mode: 'count', n })}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+
+              {hist.mode === 'width' ? (
+                <div className="pop-row">
+                  <span className="pop-label">组距</span>
+                  <div className="fill-row">
+                    <NumberField
+                      value={hist.w}
+                      min={0.000001}
+                      max={1e9}
+                      step={0.1}
+                      unit=""
+                      onCommit={(v) => onHist({ mode: 'width', w: v })}
+                    />
+                    <span className="pop-hint">→ 实际分成 {effectiveBins} 组</span>
+                  </div>
+                </div>
+              ) : null}
+
+              {hist.mode !== 'auto' ? (
+                <div className="pop-row">
+                  <span className="pop-label">
+                    组数 <b>{effectiveBins}</b>
+                    {binWidth !== null ? (
+                      <>
+                        {' '}
+                        · 组距 <b>{binWidth < 0.01 ? binWidth.toExponential(2) : Number(binWidth.toPrecision(4))}</b>
+                      </>
+                    ) : null}
+                  </span>
+                  <input
+                    type="range"
+                    className="pop-range"
+                    min={5}
+                    max={60}
+                    step={1}
+                    value={Math.min(60, Math.max(5, effectiveBins))}
+                    onChange={(e) => onHist({ mode: 'count', n: Number(e.target.value) })}
+                    aria-label="组数滑块"
+                  />
+                </div>
+              ) : null}
+
+              {histFrom !== null && histTo !== null ? (
+                <div className="pop-stat">
+                  统计区间 <b>{Number(histFrom.toPrecision(6))}</b> ~{' '}
+                  <b>{Number(histTo.toPrecision(6))}</b>（异常值单独成柱，不计入组距）
+                </div>
+              ) : null}
             </>
           )}
         </div>

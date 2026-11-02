@@ -2139,3 +2139,56 @@ select {
   background: #eff6ff !important;
   box-shadow: inset 0 0 0 2px var(--accent);
 }
+
+/* ---------- 分箱设置：数字输入 + 快捷组数 ---------- */
+.num-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.num-input {
+  width: 84px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.num-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-weak);
+}
+.num-unit {
+  font-size: 11px;
+  color: var(--muted);
+}
+.preset-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.preset-btn {
+  min-width: 26px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.preset-btn:hover {
+  border-color: #c7d2fe;
+  color: var(--ink-2);
+}
+.preset-btn.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-weak);
+  font-weight: 600;
+}

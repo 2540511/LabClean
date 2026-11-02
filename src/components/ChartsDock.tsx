@@ -32,6 +32,17 @@ function baseLabel(base: number): string {
   return base === 0 ? '' : `刻度 = 实际值 − ${shortNum(base)}`
 }
 
+/** 卡片标题里的分箱说明：正常组数 + 单独的异常柱（别让用户以为组数设错了） */
+function binSummary(bins: { kind: string }[]): string {
+  let normal = 0
+  let extra = 0
+  for (const b of bins) {
+    if (b.kind === 'normal') normal++
+    else extra++
+  }
+  return `分 ${normal} 组${extra > 0 ? ` + ${extra} 根异常柱` : ''}`
+}
+
 interface Props {
   dataset: Dataset
   selected: number
@@ -253,7 +264,7 @@ export function ChartsDock({ dataset, selected, analysis }: Props) {
         title={analysis ? '分布直方图' : '高频取值'}
         sub={
           analysis
-            ? `分 ${analysis.bins.length} 组${baseLabel(axisBase(analysis.bins)) ? ` · ${baseLabel(axisBase(analysis.bins))}` : ''}`
+            ? `${binSummary(analysis.bins)}${baseLabel(axisBase(analysis.bins)) ? ` · ${baseLabel(axisBase(analysis.bins))}` : ''}`
             : `Top ${Math.min(10, col.top.length)}`
         }
       >

@@ -33,8 +33,14 @@ import {
 import type { Dataset } from './core/types'
 import { buildWorkbook, downloadBlob, releaseBlobUrl, workbookToBlob } from './core/xlsx-io'
 import { analyzeColumn } from './lib/analyze'
-import { DEFAULT_OUTLIER_SETTINGS, isOutlierValue } from './lib/analyze'
-import type { OutlierMode, OutlierSettings } from './lib/analyze'
+import {
+  DEFAULT_HIST,
+  DEFAULT_OUTLIER_SETTINGS,
+  isOutlierValue,
+  normalRange,
+  resolveBinCount,
+} from './lib/analyze'
+import type { HistSetting, OutlierMode, OutlierSettings } from './lib/analyze'
 import { computeDiff } from './lib/diff'
 import { bytes, nowStamp } from './lib/format'
 import { TableClient } from './lib/tableClient'
@@ -97,8 +103,8 @@ export default function App() {
   const [outlierSettings, setOutlierSettings] = useState<OutlierSettings>(DEFAULT_OUTLIER_SETTINGS)
   /** 设置面板（异常标红 / 直方图分箱） */
   const [settingsOpen, setSettingsOpen] = useState(false)
-  /** 直方图分箱数；null = 自动 */
-  const [histogramBins, setHistogramBins] = useState<number | null>(null)
+  /** 直方图分箱设置：自动 / 指定组数 / 指定组距 */
+  const [hist, setHist] = useState<HistSetting>(DEFAULT_HIST)
   /** 点异常值列表后要高亮的行 */
   const [focusRow, setFocusRow] = useState<number | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -286,6 +292,9 @@ export default function App() {
     if (params.get('demo') === '1') loadDemo()
     if (params.get('dialog') === 'templates') setTplOpen(true)
     if (params.get('settings') === '1') setSettingsOpen(true)
+    // 演示/截图用：?bins=10 直接指定组数
+    const binsParam = Number(params.get('bins'))
+    if (Number.isFinite(binsParam) && binsParam >= 2) setHist({ mode: 'count', n: binsParam })
     if (params.get('dialog') === 'fuzzy') {
       setFuzzyOpen(true)
       setFuzzyAuto(params.get('autoscan') === '1')
@@ -553,17 +562,32 @@ export default function App() {
   }, [sources, showSaved])
 
   // ---------- 派生显示值 ----------
-  const analysis = useMemo(() => {
-    if (!dataset) return null
-    const col = dataset.columns[selected]
-    if (!col) return null
-    return analyzeColumn(dataset.rows, col, histogramBins ?? undefined)
-  }, [dataset, selected, histogramBins])
+  const currentColumn = dataset?.columns[selected] ?? null
 
-  /** 自动模式下实际会用的箱数（给设置面板显示） */
-  const autoBinCount = dataset
-    ? Math.max(10, Math.min(40, Math.round(Math.sqrt(Math.max(dataset.rows.length, 1)))))
-    : 10
+  /** 按用户设置换算出的实际组数（自动模式下为 undefined，交给分析函数估算） */
+  const binCount = useMemo(() => {
+    if (!dataset || !currentColumn || hist.mode === 'auto') return undefined
+    return resolveBinCount(hist, currentColumn, dataset.rows.length)
+  }, [dataset, currentColumn, hist])
+
+  const analysis = useMemo(() => {
+    if (!dataset || !currentColumn) return null
+    return analyzeColumn(dataset.rows, currentColumn, binCount)
+  }, [dataset, currentColumn, binCount])
+
+  /** 自动模式下实际会用的组数（给设置面板显示） */
+  const autoBinCount = useMemo(() => {
+    if (!currentColumn || !dataset) return 10
+    return resolveBinCount(DEFAULT_HIST, currentColumn, dataset.rows.length)
+  }, [currentColumn, dataset])
+
+  /** 正常区间和组距，写实验报告要用的数字 */
+  const histRange = currentColumn ? normalRange(currentColumn) : null
+  const effectiveBins = analysis ? analysis.bins.filter((b) => b.kind === 'normal').length : 0
+  const binWidth =
+    histRange && effectiveBins > 0
+      ? (histRange[1] - histRange[0]) / effectiveBins
+      : null
 
   /** 选中列里所有异常值所在的行（点一条可以跳过去） */
   const selectedOutliers = useMemo(() => {
@@ -634,7 +658,6 @@ export default function App() {
     return { rows: active.baseline.rows, origins: pipeline.origins }
   }, [active, pipeline])
 
-  const currentColumn = dataset?.columns[selected]
   const canUndo = !!active && active.cursor > 0
   const canRedo = !!active && active.cursor < active.steps.length
   const sourceName = active ? `${active.name}${sources.length > 1 ? ` · ${active.sheet}` : ''}` : ''
@@ -923,9 +946,13 @@ export default function App() {
         onSettings={setOutlierSettings}
         outlierCount={outlierCount}
         redColumnCount={redColumns.size}
-        bins={histogramBins}
-        onBins={setHistogramBins}
+        hist={hist}
+        onHist={setHist}
+        effectiveBins={effectiveBins}
         autoBins={autoBinCount}
+        binWidth={binWidth}
+        histFrom={histRange?.[0] ?? null}
+        histTo={histRange?.[1] ?? null}
       />
 
       <TemplateDialog
