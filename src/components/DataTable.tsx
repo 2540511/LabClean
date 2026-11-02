@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CellValue, Dataset } from '../core/types'
 import { formatCell, isBlank } from '../core/value'
+import { isOutlierValue, type OutlierMode } from '../lib/analyze'
 import { sameCell } from '../lib/diff'
 import { cx, int } from '../lib/format'
 
@@ -19,7 +20,10 @@ interface Props {
   dataset: Dataset
   selected: number
   onSelect: (index: number) => void
-  outlierRows: Set<number>
+  /** 哪些列需要把异常值标红 */
+  redColumns: Set<number>
+  outlierMode: OutlierMode
+  onOutlierMode: (mode: OutlierMode) => void
   /** 原始数据 + 行来源映射，用来标出被清洗改动过的单元格 */
   compare?: { rows: CellValue[][]; origins: number[] } | null
   /** 手动点选的行（0 基下标），用于逐行删除 */
@@ -33,7 +37,9 @@ export function DataTable({
   dataset,
   selected,
   onSelect,
-  outlierRows,
+  redColumns,
+  outlierMode,
+  onOutlierMode,
   compare,
   selectedRows,
   onToggleRow,
@@ -114,7 +120,11 @@ export function DataTable({
           <>
             <span className="legend">
               <i className="dot dot-missing" /> 空值
-              <i className="dot dot-outlier" /> 异常值
+              {redColumns.size > 0 ? (
+                <>
+                  <i className="dot dot-outlier" /> 异常值
+                </>
+              ) : null}
               {compare ? (
                 <>
                   <i className="dot dot-changed" /> 已改动
@@ -124,6 +134,20 @@ export function DataTable({
             <span className="table-tip">点一行可选中，再点一次取消</span>
           </>
         )}
+        <label className="outlier-mode" title="选择哪些列要把异常值标红">
+          异常标红
+          <select
+            className="select select-tiny"
+            value={outlierMode}
+            onChange={(e) => onOutlierMode(e.target.value as OutlierMode)}
+            aria-label="异常值标红范围"
+          >
+            <option value="current">当前列</option>
+            <option value="all">全部数值列</option>
+            <option value="custom">自定义</option>
+            <option value="none">关闭</option>
+          </select>
+        </label>
       </div>
 
       <div
@@ -153,7 +177,15 @@ export function DataTable({
           <div className="tbody" style={{ height: rows.length * ROW_H }}>
             {visible.map((r) => {
               const row = rows[r]
-              const isOutlierRow = outlierRows.has(r)
+              // 这一行里有没有「需要标红的列」出了异常值 —— 用列上算好的稳健上下界判断，不用扫全表
+              let isOutlierRow = false
+              for (const c of redColumns) {
+                const col = columns[c]
+                if (col && isOutlierValue(row[c] ?? null, col)) {
+                  isOutlierRow = true
+                  break
+                }
+              }
               return (
                 <div
                   key={r}
@@ -174,7 +206,7 @@ export function DataTable({
                   {columns.map((col, c) => {
                     const v = row[c] ?? null
                     const empty = isBlank(v)
-                    const isOutlierCell = isOutlierRow && c === selected
+                    const isOutlierCell = redColumns.has(c) && isOutlierValue(v, col)
                     const sourceRow = compare ? compare.rows[compare.origins[r]] : undefined
                     const oldValue = compare && sourceRow ? (sourceRow[c] ?? null) : null
                     const changed = compare && sourceRow ? !sameCell(oldValue, v) : false

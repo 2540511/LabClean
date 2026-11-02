@@ -32,6 +32,7 @@ import {
 import type { Dataset } from './core/types'
 import { buildWorkbook, downloadBlob, releaseBlobUrl, workbookToBlob } from './core/xlsx-io'
 import { analyzeColumn } from './lib/analyze'
+import type { OutlierMode } from './lib/analyze'
 import { computeDiff } from './lib/diff'
 import { bytes, nowStamp } from './lib/format'
 import { TableClient } from './lib/tableClient'
@@ -87,6 +88,9 @@ export default function App() {
   const [selected, setSelected] = useState(0)
   /** 表格里手动点选的行（0 基下标），用于逐行删除 */
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set())
+  /** 哪些列要把异常值标红：当前列 / 全部数值列 / 自定义 / 关闭 */
+  const [outlierMode, setOutlierMode] = useState<OutlierMode>('current')
+  const [customRedCols, setCustomRedCols] = useState<Set<number>>(new Set())
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   /** 最近一次导出的文件：浏览器拦截自动下载时，用户可以点这个链接自己另存 */
@@ -544,6 +548,35 @@ export default function App() {
     return analyzeColumn(dataset.rows, col)
   }, [dataset, selected])
 
+  /** 解析成「具体要标红的列下标集合」 */
+  const redColumns = useMemo(() => {
+    if (!dataset || outlierMode === 'none') return EMPTY_SET
+    if (outlierMode === 'all') {
+      const set = new Set<number>()
+      dataset.columns.forEach((c, i) => {
+        if (c.numeric) set.add(i)
+      })
+      return set
+    }
+    if (outlierMode === 'custom') return customRedCols
+    return new Set([selected])
+  }, [dataset, outlierMode, customRedCols, selected])
+
+  /** 点字段列表里的小红点：切换某一列是否标红，并自动进入「自定义」模式 */
+  const toggleRedColumn = useCallback(
+    (index: number) => {
+      setCustomRedCols((prev) => {
+        const base = outlierMode === 'custom' ? prev : new Set(redColumns)
+        const next = new Set(base)
+        if (next.has(index)) next.delete(index)
+        else next.add(index)
+        return next
+      })
+      setOutlierMode('custom')
+    },
+    [outlierMode, redColumns],
+  )
+
   const compareSource = useMemo(() => {
     if (!active || !pipeline || active.baseline === pipeline.dataset) return null
     // 列被删除/重排/改名后，「原值」悬浮提示会指错列，干脆关掉
@@ -696,6 +729,8 @@ export default function App() {
             busy={!!busy}
             selected={selected}
             onSelect={setSelected}
+            redColumns={redColumns}
+            onToggleRedColumn={toggleRedColumn}
             onSelectSource={setActiveId}
             onRemoveSource={removeSource}
             onAddSource={() => inputRef.current?.click()}
@@ -739,7 +774,9 @@ export default function App() {
               dataset={dataset}
               selected={selected}
               onSelect={setSelected}
-              outlierRows={analysis?.outlierRows ?? EMPTY_SET}
+              redColumns={redColumns}
+              outlierMode={outlierMode}
+              onOutlierMode={setOutlierMode}
               compare={compareSource}
               selectedRows={selectedRows}
               onToggleRow={toggleRow}

@@ -109,3 +109,17 @@ export function classifySeverity(score: number): 'good' | 'warn' | 'bad' {
   if (score >= 65) return 'warn'
   return 'bad'
 }
+
+/** 表格里「哪些列标红异常值」的四种模式 */
+export type OutlierMode = 'current' | 'all' | 'none' | 'custom'
+
+/**
+ * 判断单个单元格是不是异常值。
+ * 直接复用体检时算好的稳健上下界（中位数 + MAD），不需要再扫全表，
+ * 所以表格里可以同时对任意多列标红。
+ */
+export function isOutlierValue(v: CellValue, col: Column): boolean {
+  const stats = col.numeric
+  if (!stats || typeof v !== 'number') return false
+  return v < stats.lowFence || v > stats.highFence
+}

@@ -24,6 +24,9 @@ interface Props {
   busy: boolean
   selected: number
   onSelect: (index: number) => void
+  /** 哪些列需要把异常值标红 */
+  redColumns: Set<number>
+  onToggleRedColumn: (index: number) => void
   onSelectSource: (id: string) => void
   onRemoveSource: (id: string) => void
   onAddSource: () => void
@@ -65,6 +68,8 @@ export function Rail({
   busy,
   selected,
   onSelect,
+  redColumns,
+  onToggleRedColumn,
   onSelectSource,
   onRemoveSource,
   onAddSource,
@@ -125,17 +130,32 @@ export function Rail({
           {dataset.columns.map((col, i) => {
             const tone = classifySeverity(col.score)
             return (
-              <button
-                key={col.key}
-                className={cx('col-item', i === selected && 'is-active')}
-                onClick={() => onSelect(i)}
-                title={col.issues.map((x) => x.message).join('；') || '没有发现问题'}
-              >
-                <i className="col-dot" style={{ background: DOT_COLOR[tone] }} />
-                <span className="col-name">{col.name}</span>
-                <span className={cx('type-pill', `type-${col.type}`)}>{TYPE_SHORT[col.type]}</span>
-                {col.issues.length > 0 ? <span className="col-badge">{col.issues.length}</span> : null}
-              </button>
+              <div key={col.key} className="col-row">
+                <button
+                  className={cx('col-item', i === selected && 'is-active')}
+                  onClick={() => onSelect(i)}
+                  title={col.issues.map((x) => x.message).join('；') || '没有发现问题'}
+                >
+                  <i className="col-dot" style={{ background: DOT_COLOR[tone] }} />
+                  <span className="col-name">{col.name}</span>
+                  <span className={cx('type-pill', `type-${col.type}`)}>{TYPE_SHORT[col.type]}</span>
+                  {col.issues.length > 0 ? <span className="col-badge">{col.issues.length}</span> : null}
+                </button>
+                {col.numeric ? (
+                  <button
+                    className={cx('red-toggle', redColumns.has(i) && 'is-on')}
+                    onClick={() => onToggleRedColumn(i)}
+                    aria-pressed={redColumns.has(i)}
+                    title={
+                      redColumns.has(i)
+                        ? '不再标红这一列的异常值'
+                        : '把这一列的异常值标红（可多选）'
+                    }
+                  >
+                    ●
+                  </button>
+                ) : null}
+              </div>
             )
           })}
         </div>
