@@ -123,12 +123,12 @@ export function opTitle(spec: OpSpec): string {
 /** 在给定状态上执行一步，返回新状态（不修改入参） */
 export function applySpec(state: TableState, spec: OpSpec): StepOutcome {
   const { rows, origins, headers } = state
-  // 算子只用到列下标，这里用当前表头造一份轻量列信息
-  const columns = headers.map((name, index) => ({ name, index }) as Column)
+  // 算子只需要列下标，给出最小结构即可，不要伪造完整的 Column
+  const colRefs = headers.map((_, index) => ({ index }))
 
   switch (spec.kind) {
     case 'trim': {
-      const r = opTrimWhitespace(rows, columns)
+      const r = opTrimWhitespace(rows, colRefs)
       return { rows: r.rows, origins, headers, affected: r.affected, detail: r.detail }
     }
     case 'fillMissing': {
@@ -140,7 +140,7 @@ export function applySpec(state: TableState, spec: OpSpec): StepOutcome {
       return { rows: r.rows, origins, headers, affected: r.affected, detail: r.detail }
     }
     case 'dropDuplicates': {
-      const r = opDropDuplicateRows(rows, columns)
+      const r = opDropDuplicateRows(rows, colRefs)
       const kept = r.kept ?? rows.map((_, i) => i)
       return {
         rows: r.rows,

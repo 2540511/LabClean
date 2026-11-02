@@ -104,7 +104,9 @@ const INVALID_XML_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g
 
 function cleanExportValue(v: string | number | boolean | Date | null | undefined) {
   if (typeof v !== 'string') return v ?? null
-  return INVALID_XML_CHARS.test(v) ? v.replace(INVALID_XML_CHARS, '') : v
+  // 直接用 replace，不要先 test 再 replace：
+  // /g 正则是带状态的（lastIndex），混用容易在后续字符串上漏检
+  return v.replace(INVALID_XML_CHARS, '')
 }
 
 export function workbookToBlob(wb: XLSX.WorkBook): Blob {
@@ -115,12 +117,14 @@ export function workbookToBlob(wb: XLSX.WorkBook): Blob {
 }
 
 /**
- * 触发浏览器下载。
+ * 触发浏览器下载，返回 object URL（供上层做「手动保存」兜底入口）。
  *
  * 两个坑：
  * 1. `<a>` 点击后**不能立刻移除** —— 部分 Chromium 会把正在进行的 blob 下载取消掉；
  * 2. object URL 也不能 early revoke，大文件（几十 MB、上万行）还没写完就被吊销会失败。
- * 所以这里保留 10s 再移除、60s 再释放，并返回 URL 供上层做「手动保存」兜底入口。
+ *
+ * 所以：`<a>` 保留 10s 再移除；URL **不在这里自动释放** —— 因为上层会把它挂在
+ * 「手动保存」按钮上，用户可能过几分钟才去点。由调用方在不再需要时调 releaseBlobUrl()。
  */
 export function downloadBlob(blob: Blob, filename: string): string {
   const url = URL.createObjectURL(blob)
@@ -131,7 +135,6 @@ export function downloadBlob(blob: Blob, filename: string): string {
   if (typeof legacy === 'function') {
     try {
       legacy.call(navigator, blob, filename)
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
       return url
     } catch {
       // 落到标准路径
@@ -146,6 +149,15 @@ export function downloadBlob(blob: Blob, filename: string): string {
   a.click()
 
   window.setTimeout(() => a.remove(), 10_000)
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
   return url
+}
+
+/** 用完了再释放，避免「手动保存」链接在用户点击之前就失效 */
+export function releaseBlobUrl(url: string | null | undefined): void {
+  if (!url) return
+  try {
+    URL.revokeObjectURL(url)
+  } catch {
+    // 已经释放过就忽略
+  }
 }

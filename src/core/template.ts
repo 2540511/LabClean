@@ -117,11 +117,17 @@ export function toTemplateSteps(specs: OpSpec[], columns: Column[]): TemplateSte
 /**
  * 把模板步骤落到某个具体数据源上。
  * 找不到对应列名的步骤会被跳过（不同表列结构不完全一致时也不至于报错）。
+ *
+ * 注意：这里必须用「演进中」的列布局来定位，不能拿原始的 columns 去查名字 ——
+ * 模板里先重命名、再引用新名字是合法写法（如 改名「温度」→「温度(℃)」后筛选「温度(℃)」），
+ * 而原始 columns 里永远没有新名字。
  */
 export function materializeSteps(steps: TemplateStep[], columns: Column[]): OpSpec[] {
   const out: OpSpec[] = []
-  // 列操作的中间状态：删列/调序/重命名之后，后续步骤的列下标要跟着当前布局算
+  // 当前布局：列名 + 它对应的原始列对象（取中位数等统计量要用，重命名后仍然指向同一列）
   const names = columns.map((c) => c.name)
+  const sources = columns.slice()
+
   const indexOf = (name: string) => {
     const exact = names.indexOf(name)
     if (exact >= 0) return exact
@@ -134,42 +140,48 @@ export function materializeSteps(steps: TemplateStep[], columns: Column[]): OpSp
       out.push({ kind: step.kind })
       continue
     }
-    const col = findColumnByName(columns, step.colName)
-    if (!col) continue
+
     const idx = indexOf(step.colName)
     if (idx < 0) continue
+    const colName = names[idx]
+    const source = sources[idx]
 
     if (step.kind === 'normalizeNumbers') {
-      out.push({ kind: 'normalizeNumbers', colIndex: idx, colName: col.name })
+      out.push({ kind: 'normalizeNumbers', colIndex: idx, colName })
       continue
     }
     if (step.kind === 'filterRows') {
-      out.push({ kind: 'filterRows', colIndex: idx, colName: col.name, op: step.op, value: step.value })
+      out.push({ kind: 'filterRows', colIndex: idx, colName, op: step.op, value: step.value })
       continue
     }
     if (step.kind === 'dropColumn') {
-      out.push({ kind: 'dropColumn', colIndex: idx, colName: col.name })
+      out.push({ kind: 'dropColumn', colIndex: idx, colName })
       names.splice(idx, 1)
+      sources.splice(idx, 1)
       continue
     }
     if (step.kind === 'moveColumn') {
       const to = Math.max(0, Math.min(names.length - 1, step.to))
-      out.push({ kind: 'moveColumn', from: idx, to, colName: col.name })
-      const [moved] = names.splice(idx, 1)
-      names.splice(to, 0, moved)
+      out.push({ kind: 'moveColumn', from: idx, to, colName })
+      const [movedName] = names.splice(idx, 1)
+      names.splice(to, 0, movedName)
+      const [movedSource] = sources.splice(idx, 1)
+      sources.splice(to, 0, movedSource)
       continue
     }
     if (step.kind === 'renameColumn') {
-      out.push({ kind: 'renameColumn', colIndex: idx, from: col.name, to: step.to })
+      out.push({ kind: 'renameColumn', colIndex: idx, from: colName, to: step.to })
       names[idx] = step.to
       continue
     }
-    const value = resolveFillValue(col, step.strategy, step.custom)
+
+    // 剩下的只有 fillMissing：填充值仍然按「原始列」的统计量算，保证跨表可复现
+    const value = resolveFillValue(source, step.strategy, step.custom)
     if (value === null) continue
     out.push({
       kind: 'fillMissing',
       colIndex: idx,
-      colName: col.name,
+      colName,
       strategy: step.strategy,
       value,
     })

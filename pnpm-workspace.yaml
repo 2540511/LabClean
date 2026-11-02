@@ -1,8 +1,0 @@
-packages: []
-
-# 扁平 node_modules，和项目原本用 npm 安装的结构一致（vite/rollup 等依赖按普通路径解析）
-nodeLinker: hoisted
-
-# esbuild 的平台二进制由 @esbuild/win32-x64 提供，无需运行安装脚本
-allowBuilds:
-  esbuild: false

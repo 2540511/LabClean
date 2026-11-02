@@ -284,12 +284,13 @@ export function Inspector({
         </div>
       </section>
 
-      <section className="panel">
-        <div className="panel-head">
-          行筛选
-          <span className="panel-hint">保留符合条件的行</span>
-        </div>
+      <details className="panel more-ops">
+        <summary className="panel-head">
+          行筛选 / 列操作
+          <span className="panel-hint">点开</span>
+        </summary>
         <div className="panel-body">
+          <div className="ops-sub-title">行筛选 · 保留符合条件的行</div>
           <div className="fill-row">
             <select
               className="select select-narrow"
@@ -322,15 +323,10 @@ export function Inspector({
           <div className="hint">
             大于/小于按数值比较（条件值不是数字时按字符串序），空值不保留；包含/不包含按文本，忽略大小写
           </div>
-        </div>
-      </section>
 
-      <section className="panel">
-        <div className="panel-head">
-          列操作
-          <span className="panel-hint">{dataset.columns.length} 列</span>
-        </div>
-        <div className="panel-body">
+          <div className="ops-sub-title">
+            列操作 <span className="panel-hint">共 {dataset.columns.length} 列</span>
+          </div>
           <div className="fill-row">
             <input
               className="select filter-input"
@@ -372,7 +368,7 @@ export function Inspector({
           </button>
           <div className="hint">至少保留一列；删除只能撤销，导出会少这一列</div>
         </div>
-      </section>
+      </details>
 
       <section className="panel">
         <div className="panel-head">

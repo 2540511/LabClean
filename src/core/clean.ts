@@ -10,6 +10,14 @@ export interface OpResult {
 }
 
 /**
+ * 算子只需要知道「第几列」，不需要完整的 Column（类型、统计量等）。
+ * 用这个最小结构约束参数，调用方就不用伪造一个假 Column 再 as 断言。
+ */
+export interface ColumnRef {
+  index: number
+}
+
+/**
  * 所有算子都是「写时复制」：
  * 只有真正被改动的行才复制一份新数组，其余行保持原对象引用。
  * 这样原始数据（baseline）永远不会被破坏，撤销只要重放即可，
@@ -18,7 +26,7 @@ export interface OpResult {
 
 const EDGE_SPACE_RE = /^[\s\u00a0\u3000]+|[\s\u00a0\u3000]+$/g
 
-export function opTrimWhitespace(rows: CellValue[][], columns: Column[]): OpResult {
+export function opTrimWhitespace(rows: CellValue[][], columns: ReadonlyArray<ColumnRef>): OpResult {
   const next = rows.slice()
   let affected = 0
   for (let r = 0; r < next.length; r++) {
@@ -93,7 +101,7 @@ export function opFillMissing(
   }
 }
 
-export function opDropDuplicateRows(rows: CellValue[][], columns: Column[]): OpResult {
+export function opDropDuplicateRows(rows: CellValue[][], columns: ReadonlyArray<ColumnRef>): OpResult {
   const seen = new Set<string>()
   const kept: CellValue[][] = []
   const keptIdx: number[] = []

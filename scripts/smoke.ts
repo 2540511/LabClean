@@ -529,6 +529,41 @@ console.log('\n[14] 行筛选与列操作')
   eq('删掉的行数能算出来', computeDiff(base, gt.rows, gt.origins, gt.headers).removedRows, 2)
 }
 
+console.log('\n[14] 模板：重命名后引用新列名（回归）')
+{
+  const ds = buildDataset('t.csv', '数据', parseCsv('温度,浓度\n25,1\n30,2\n'))
+  const specs = materializeSteps(
+    [
+      { kind: 'renameColumn', colName: '温度', to: '温度(℃)' },
+      { kind: 'filterRows', colName: '温度(℃)', op: 'gt', value: '26' },
+    ],
+    ds.columns,
+  )
+  eq('重命名 + 引用新名字，两步都要生成', specs.length, 2)
+  eq('第一步是重命名', specs[0]?.kind, 'renameColumn')
+  eq('第二步是筛选', specs[1]?.kind, 'filterRows')
+  eq('筛选的列下标正确', (specs[1] as { colIndex: number } | undefined)?.colIndex, 0)
+
+  // 重命名 → 删掉该列 → 后续步骤按新布局算下标
+  const specs2 = materializeSteps(
+    [
+      { kind: 'renameColumn', colName: '温度', to: 'T' },
+      { kind: 'dropColumn', colName: 'T' },
+      { kind: 'filterRows', colName: '浓度', op: 'gt', value: '1.5' },
+    ],
+    ds.columns,
+  )
+  eq('重命名 + 删列 + 引用剩余列，三步都要生成', specs2.length, 3)
+  eq('删列后「浓度」下标变成 0', (specs2[2] as { colIndex: number } | undefined)?.colIndex, 0)
+
+  // 列名真的不存在时仍然跳过，别把容错弄没了
+  const specs3 = materializeSteps(
+    [{ kind: 'filterRows', colName: '不存在的列', op: 'gt', value: '1' }],
+    ds.columns,
+  )
+  eq('列名不存在时跳过', specs3.length, 0)
+}
+
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)
 if (failures.length > 0) {
   console.log(failures.map((f) => `  - ${f}`).join('\n'))

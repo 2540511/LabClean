@@ -30,7 +30,7 @@ import {
   type CleanTemplate,
 } from './core/template'
 import type { Dataset } from './core/types'
-import { buildWorkbook, downloadBlob, workbookToBlob } from './core/xlsx-io'
+import { buildWorkbook, downloadBlob, releaseBlobUrl, workbookToBlob } from './core/xlsx-io'
 import { analyzeColumn } from './lib/analyze'
 import { computeDiff } from './lib/diff'
 import { bytes, nowStamp } from './lib/format'
@@ -89,6 +89,19 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   /** 最近一次导出的文件：浏览器拦截自动下载时，用户可以点这个链接自己另存 */
   const [saved, setSaved] = useState<{ url: string; name: string } | null>(null)
+  /** 记住当前 object URL，换新导出或关闭提示条时才释放（不能提前 revoke，否则「手动保存」会失效） */
+  const savedUrlRef = useRef<string | null>(null)
+  const showSaved = useCallback((url: string, name: string) => {
+    releaseBlobUrl(savedUrlRef.current)
+    savedUrlRef.current = url
+    setSaved({ url, name })
+  }, [])
+  const closeSaved = useCallback(() => {
+    releaseBlobUrl(savedUrlRef.current)
+    savedUrlRef.current = null
+    setSaved(null)
+  }, [])
+  useEffect(() => () => releaseBlobUrl(savedUrlRef.current), [])
   const [dragging, setDragging] = useState(false)
   const [encoding, setEncoding] = useState('')
   const [templates, setTemplates] = useState<CleanTemplate[]>(() => [
@@ -453,14 +466,14 @@ export default function App() {
         const wb = buildWorkbook(buildReportSheets(dataset, logEntries))
         const base = (dataset.name || '数据').replace(/\.[^.]+$/, '')
         const name = `${base}_清洗结果_${nowStamp()}.xlsx`
-        setSaved({ url: downloadBlob(workbookToBlob(wb), name), name })
+        showSaved(downloadBlob(workbookToBlob(wb), name), name)
       } catch (e) {
         setError(describeError(e))
       } finally {
         setBusy(null)
       }
     }, 40)
-  }, [dataset, logEntries])
+  }, [dataset, logEntries, showSaved])
 
   const exportAll = useCallback(() => {
     if (sources.length === 0) return
@@ -480,14 +493,14 @@ export default function App() {
           })),
         }))
         const name = `数据对比_${nowStamp()}.xlsx`
-        setSaved({ url: downloadBlob(workbookToBlob(buildWorkbook(buildCompareSheets(items))), name), name })
+        showSaved(downloadBlob(workbookToBlob(buildWorkbook(buildCompareSheets(items))), name), name)
       } catch (e) {
         setError(describeError(e))
       } finally {
         setBusy(null)
       }
     }, 40)
-  }, [sources])
+  }, [sources, showSaved])
 
   // ---------- 派生显示值 ----------
   const analysis = useMemo(() => {
@@ -794,7 +807,7 @@ export default function App() {
           <a className="btn btn-small btn-primary" href={saved.url} download={saved.name}>
             手动保存
           </a>
-          <button className="btn btn-small" onClick={() => setSaved(null)}>
+          <button className="btn btn-small" onClick={closeSaved}>
             关闭
           </button>
         </div>
