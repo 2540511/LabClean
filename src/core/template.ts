@@ -92,6 +92,9 @@ export function toTemplateSteps(specs: OpSpec[], columns: Column[]): TemplateSte
       case 'fuzzyDedupe':
         // 模糊去重的待删行是「扫出来的」，换成另一张表就不成立了，所以不进模板
         break
+      case 'dropRows':
+        // 手动点选删除的行号同样是「这张表」的，不进模板
+        break
       case 'filterRows':
         out.push({
           kind: 'filterRows',

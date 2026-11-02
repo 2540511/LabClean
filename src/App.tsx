@@ -85,6 +85,8 @@ export default function App() {
     new URLSearchParams(window.location.search).get('view') === 'compare' ? 'compare' : 'table',
   )
   const [selected, setSelected] = useState(0)
+  /** 表格里手动点选的行（0 基下标），用于逐行删除 */
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set())
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   /** 最近一次导出的文件：浏览器拦截自动下载时，用户可以点这个链接自己另存 */
@@ -421,11 +423,43 @@ export default function App() {
     [patchActive],
   )
 
+  // ---------- 行选中 / 删除 ----------
+  const toggleRow = useCallback((row: number) => {
+    setSelectedRows((prev) => {
+      const next = new Set(prev)
+      if (next.has(row)) next.delete(row)
+      else next.add(row)
+      return next
+    })
+  }, [])
+
+  const clearRows = useCallback(() => setSelectedRows(new Set()), [])
+
+  const deleteSelectedRows = useCallback(() => {
+    if (selectedRows.size === 0) return
+    // 行号必须排序：重放时按这份下标删，顺序不影响结果，但日志读起来更清楚
+    runOp({ kind: 'dropRows', indices: [...selectedRows].sort((a, b) => a - b) })
+    setSelectedRows(new Set())
+  }, [runOp, selectedRows])
+
+  // 数据一变（任何清洗动作、撤销、切数据源），原来的行号就失效了，必须清空
+  useEffect(() => {
+    setSelectedRows(new Set())
+  }, [dataset])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return
       const target = e.target as HTMLElement | null
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return
+      const typing = !!target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)
+
+      // 删除键：把选中的行删掉（可撤销）
+      if (!typing && (e.key === 'Delete' || e.key === 'Backspace') && selectedRows.size > 0) {
+        e.preventDefault()
+        deleteSelectedRows()
+        return
+      }
+      if (!(e.ctrlKey || e.metaKey)) return
+      if (typing) return
       const key = e.key.toLowerCase()
       if (key === 'z') {
         e.preventDefault()
@@ -438,7 +472,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [redo, undo])
+  }, [deleteSelectedRows, redo, selectedRows.size, undo])
 
   // ---------- 导出 ----------
   const logEntries = useMemo(() => {
@@ -707,6 +741,10 @@ export default function App() {
               onSelect={setSelected}
               outlierRows={analysis?.outlierRows ?? EMPTY_SET}
               compare={compareSource}
+              selectedRows={selectedRows}
+              onToggleRow={toggleRow}
+              onClearRows={clearRows}
+              onDeleteRows={deleteSelectedRows}
             />
 
             <ChartsDock dataset={dataset} selected={selected} analysis={analysis} />

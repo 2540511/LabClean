@@ -1875,3 +1875,28 @@ select {
   padding-top: 12px;
   border-top: 1px dashed var(--line);
 }
+
+/* ---------- 行选中与删除 ---------- */
+.tr-body {
+  cursor: pointer;
+}
+.tr-body:hover {
+  background: #f8fafc;
+}
+.tbody > .tr.tr-picked {
+  background: #eff6ff !important;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.tbody > .tr.tr-picked .td-idx {
+  color: var(--accent);
+  font-weight: 600;
+}
+.sel-info {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.table-tip {
+  font-size: 10.5px;
+  color: var(--faint);
+}

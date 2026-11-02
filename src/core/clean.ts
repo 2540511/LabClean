@@ -157,6 +157,28 @@ export function opNormalizeNumbers(rows: CellValue[][], colIndex: number, colNam
   return { rows: next, affected, detail: `「${colName}」有 ${affected} 个值转成了数字` }
 }
 
+/**
+ * 按行下标删除（表格里点选后删除用）。
+ * 下标是「当前表」的 0 基下标；重放时会原样重现，所以撤销能精确还原。
+ */
+export function opDropRows(rows: CellValue[][], indices: number[]): OpResult {
+  const drop = new Set(indices)
+  const kept: CellValue[][] = []
+  const keptIdx: number[] = []
+  for (let i = 0; i < rows.length; i++) {
+    if (drop.has(i)) continue
+    kept.push(rows[i])
+    keptIdx.push(i)
+  }
+  const affected = rows.length - kept.length
+  return {
+    rows: kept,
+    kept: keptIdx,
+    affected,
+    detail: `手动删除了 ${affected} 行`,
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * 行筛选：只保留符合条件的行
  * ------------------------------------------------------------------ */

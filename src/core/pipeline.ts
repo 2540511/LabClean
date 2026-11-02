@@ -5,6 +5,7 @@ import {
   opDropColumn,
   opDropDuplicateRows,
   opDropEmptyRows,
+  opDropRows,
   opFilterRows,
   opFillMissing,
   opMoveColumn,
@@ -38,6 +39,7 @@ export type OpSpec =
       dropRows: number[]
     }
   | { kind: 'filterRows'; colIndex: number; colName: string; op: FilterOp; value: string }
+  | { kind: 'dropRows'; indices: number[] }
   | { kind: 'dropColumn'; colIndex: number; colName: string }
   | { kind: 'moveColumn'; from: number; to: number; colName: string }
   | { kind: 'renameColumn'; colIndex: number; from: string; to: string }
@@ -111,6 +113,8 @@ export function opTitle(spec: OpSpec): string {
       return `模糊去重（${spec.colName}）`
     case 'filterRows':
       return `行筛选（${spec.colName} ${FILTER_LABEL[spec.op]} ${spec.value}）`
+    case 'dropRows':
+      return `删除行（${spec.indices.length} 行）`
     case 'dropColumn':
       return `删除列（${spec.colName}）`
     case 'moveColumn':
@@ -182,6 +186,17 @@ export function applySpec(state: TableState, spec: OpSpec): StepOutcome {
     case 'filterRows': {
       const r = opFilterRows(rows, spec.colIndex, spec.colName, spec.op, spec.value)
       const kept = r.kept ?? rows.map((_, i) => i)
+      return {
+        rows: r.rows,
+        origins: kept.map((i) => origins[i]),
+        headers,
+        affected: r.affected,
+        detail: r.detail,
+      }
+    }
+    case 'dropRows': {
+      const r = opDropRows(rows, spec.indices)
+      const kept = r.kept ?? []
       return {
         rows: r.rows,
         origins: kept.map((i) => origins[i]),

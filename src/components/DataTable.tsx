@@ -22,9 +22,24 @@ interface Props {
   outlierRows: Set<number>
   /** 原始数据 + 行来源映射，用来标出被清洗改动过的单元格 */
   compare?: { rows: CellValue[][]; origins: number[] } | null
+  /** 手动点选的行（0 基下标），用于逐行删除 */
+  selectedRows: Set<number>
+  onToggleRow: (row: number) => void
+  onClearRows: () => void
+  onDeleteRows: () => void
 }
 
-export function DataTable({ dataset, selected, onSelect, outlierRows, compare }: Props) {
+export function DataTable({
+  dataset,
+  selected,
+  onSelect,
+  outlierRows,
+  compare,
+  selectedRows,
+  onToggleRow,
+  onClearRows,
+  onDeleteRows,
+}: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewH, setViewH] = useState(480)
@@ -85,15 +100,30 @@ export function DataTable({ dataset, selected, onSelect, outlierRows, compare }:
             : ' · 未检测重复行'}
         </span>
         <span className="spacer" />
-        <span className="legend">
-          <i className="dot dot-missing" /> 空值
-          <i className="dot dot-outlier" /> 异常值
-          {compare ? (
-            <>
-              <i className="dot dot-changed" /> 已改动
-            </>
-          ) : null}
-        </span>
+        {selectedRows.size > 0 ? (
+          <>
+            <span className="sel-info">已选 {int(selectedRows.size)} 行</span>
+            <button className="btn btn-small danger-text" onClick={onDeleteRows}>
+              删除选中的行
+            </button>
+            <button className="btn btn-small" onClick={onClearRows}>
+              取消选择
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="legend">
+              <i className="dot dot-missing" /> 空值
+              <i className="dot dot-outlier" /> 异常值
+              {compare ? (
+                <>
+                  <i className="dot dot-changed" /> 已改动
+                </>
+              ) : null}
+            </span>
+            <span className="table-tip">点一行可选中，再点一次取消</span>
+          </>
+        )}
       </div>
 
       <div
@@ -127,8 +157,16 @@ export function DataTable({ dataset, selected, onSelect, outlierRows, compare }:
               return (
                 <div
                   key={r}
-                  className={cx('tr', r % 2 === 1 && 'tr-alt', isOutlierRow && 'tr-outlier')}
+                  className={cx(
+                    'tr',
+                    'tr-body',
+                    r % 2 === 1 && 'tr-alt',
+                    isOutlierRow && 'tr-outlier',
+                    selectedRows.has(r) && 'tr-picked',
+                  )}
                   style={{ top: r * ROW_H, height: ROW_H }}
+                  onClick={() => onToggleRow(r)}
+                  title={selectedRows.has(r) ? '再点一次取消选中' : '点一下选中这一行'}
                 >
                   <div className="td td-idx" style={{ width: IDX_W }}>
                     {r + 1}

@@ -604,6 +604,23 @@ console.log('\n[15] 表头识别（多行标题的真实报表）')
   )
 }
 
+console.log('\n[16] 手动删除行（可撤销）')
+{
+  const base = buildDataset('t.csv', '数据', parseCsv('a,b\n1,x\n2,y\n3,z\n4,w\n'))
+  const dropped = replay(base.rows, base.columns, [{ kind: 'dropRows', indices: [1, 3] }])
+  eq('删掉 2 行', dropped.rows.length, 2)
+  eq('行来源映射正确', dropped.origins, [0, 2])
+  eq('留下的是第 1、3 行', dropped.rows.map((r) => r[0]), [1, 3])
+  eq('删行结果可撤销（0 步 = 原始）', replay(base.rows, base.columns, []).rows.length, 4)
+
+  const chained = replay(base.rows, base.columns, [
+    { kind: 'dropRows', indices: [0] },
+    { kind: 'filterRows', colIndex: 0, colName: 'a', op: 'gt', value: '2' },
+  ])
+  eq('删行后再筛选', chained.rows.map((r) => r[0]), [3, 4])
+  eq('删行不进模板（依赖具体行号）', toTemplateSteps([{ kind: 'dropRows', indices: [0] }], base.columns), [])
+}
+
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)
 if (failures.length > 0) {
   console.log(failures.map((f) => `  - ${f}`).join('\n'))
