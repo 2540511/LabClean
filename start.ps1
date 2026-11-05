@@ -1,4 +1,4 @@
-﻿# 启动 LabClean（已构建好的静态版本）
+# 启动 LabClean（已构建好的静态版本）
 # 用法：右键「使用 PowerShell 运行」，或在终端执行：
 #   powershell -ExecutionPolicy Bypass -File .\start.ps1
 param([int]$Port = 5173)
@@ -20,6 +20,13 @@ if (-not $nodeExe) {
   $dsh = Join-Path $env:LOCALAPPDATA 'dsh-tools'
   if (Test-Path $dsh) {
     $candidates += Get-ChildItem $dsh -Recurse -Filter node.exe -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty FullName
+  }
+  # 兜底：DSH 自带运行时（本工作区就是这种情况）
+  $dshRuntime = Join-Path $env:LOCALAPPDATA '.dsh\dsh-runtimes'
+  if (Test-Path $dshRuntime) {
+    $candidates += Get-ChildItem $dshRuntime -Recurse -Filter node.exe -ErrorAction SilentlyContinue |
+      Where-Object { $_.FullName -like '*\dependencies\node\bin\node.exe' } |
       Select-Object -ExpandProperty FullName
   }
   $nodeExe = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
