@@ -2194,3 +2194,129 @@ select {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- 辅助功能：校验报告 ---------- */
+.report-box {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--line-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---------- 清洗前后左右分屏对比 ---------- */
+.cmp-modal {
+  width: min(1180px, 100%);
+  max-height: 88vh;
+}
+.cmp-summary {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+.cmp-summary b {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.cmp-arrow {
+  color: var(--faint);
+}
+.cmp-sep {
+  color: var(--line);
+}
+.cmp-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 10px 12px 4px;
+}
+.cmp-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.cmp-pane-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--line-soft);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 600;
+}
+.cmp-pane-sub {
+  font-weight: 400;
+  font-size: 10.5px;
+  color: var(--faint);
+}
+.cmp-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  max-height: 58vh;
+}
+.cmp-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 11px;
+}
+.cmp-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 5px 8px;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.cmp-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+.cmp-idx {
+  width: 42px;
+  color: var(--faint);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cmp-row-removed td {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+.cmp-cell-changed {
+  background: #ecfdf5;
+  color: #047857;
+  font-weight: 600;
+}
+.cmp-foot {
+  flex: none;
+  padding: 6px 16px 10px;
+  font-size: 11px;
+  color: var(--faint);
+}

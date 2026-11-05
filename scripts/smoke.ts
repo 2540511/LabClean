@@ -17,8 +17,9 @@ import {
   opTrimWhitespace,
   resolveFillValue,
 } from '../src/core/clean'
-import { replay, type OpSpec } from '../src/core/pipeline'
+import { buildStepSequence, replay, type OpSpec } from '../src/core/pipeline'
 import { computeDiff } from '../src/lib/diff'
+import { buildCheckReport } from '../src/lib/checkReport'
 import {
   DEFAULT_OUTLIER_SETTINGS,
   isOutlierValue,
@@ -698,6 +699,42 @@ console.log('\n[18] 合计/统计行与列不报异常')
     plainDs.columns[0].numeric!.outliers === 1,
     String(plainDs.columns[0].numeric!.outliers),
   )
+}
+
+console.log('\n[19] 校验报告文本')
+{
+  const csv = ['姓名,分数', '张三,80', '李四,', '王五,70', '张三,80'].join('\n')
+  const base = buildDataset('t.csv', '数据', parseCsv(csv))
+  const seq = buildStepSequence(base.rows, base.columns, [
+    { kind: 'fillMissing', colIndex: 1, colName: '分数', strategy: 'zero', value: 0 },
+    { kind: 'dropDuplicates' },
+  ])
+  const after = rebuildDataset(base, seq.rows, { headers: seq.headers })
+  const text = buildCheckReport({
+    dataset: after,
+    baseline: base,
+    steps: seq.steps,
+    cursor: seq.steps.length,
+    now: new Date(2026, 10, 5, 21, 30),
+  })
+
+  check('含标题', text.includes('LabClean 清洗校验报告'), text.slice(0, 40))
+  check('含生成时间', text.includes('2026-11-05 21:30'), text)
+  check('原始行数正确', text.includes('原始行数：4'), text)
+  check('清洗后行数正确', text.includes('清洗后行数：3'), text)
+  check('删除行数正确', text.includes('删除行数：1'), text)
+  check('填充空值统计正确', text.includes('填充空值：1 处'), text)
+  check('含异常值前后对照', /异常值：\d+ → \d+/.test(text), text)
+  check('含步骤明细', text.includes('1. 填充缺失') && text.includes('2. 删除重复行'), text)
+
+  // 撤销掉最后一步：报告里只剩已应用的，并注明有步骤被撤销
+  const partial = buildCheckReport({ dataset: after, baseline: base, steps: seq.steps, cursor: 1 })
+  check('撤销的步骤不计入', !partial.includes('2. 删除重复行'), partial)
+  check('注明有步骤已撤销', partial.includes('已撤销'), partial)
+
+  // 没做过清洗也要有明确说明
+  const none = buildCheckReport({ dataset: base, baseline: base, steps: [], cursor: 0 })
+  check('未清洗时说明按原始状态', none.includes('清洗步骤：无'), none)
 }
 
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)

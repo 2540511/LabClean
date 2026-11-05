@@ -879,6 +879,7 @@ export default function App() {
           <Inspector
             dataset={dataset}
             baseline={active.baseline}
+            origins={pipeline.origins}
             column={currentColumn}
             steps={active.steps}
             cursor={active.cursor}

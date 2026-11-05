@@ -4,6 +4,7 @@ import { FILTER_LABEL, resolveFillValue, type FillStrategy, type FilterOp } from
 import type { OpSpec, StepRecord } from '../core/pipeline'
 import type { DatasetDiff } from '../lib/diff'
 import { cx, int, num, pct } from '../lib/format'
+import { AuxPanel } from './AuxPanel'
 
 const TYPE_LABEL: Record<string, string> = {
   number: '数值',
@@ -17,6 +18,8 @@ const SEVERITY_LABEL: Record<string, string> = { error: '严重', warn: '警告'
 interface Props {
   dataset: Dataset
   baseline: Dataset | null
+  /** 当前每行来自原始数据的第几行（左右分屏对比要用） */
+  origins: number[]
   column: Column
   steps: StepRecord[]
   cursor: number
@@ -40,44 +43,10 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'wa
   )
 }
 
-/** 前后对比的一行：数值 + 变化量 */
-function Delta({
-  label,
-  before,
-  after,
-  goodWhenDown = true,
-  format = (v: number) => int(v),
-}: {
-  label: string
-  before: number
-  after: number
-  goodWhenDown?: boolean
-  format?: (v: number) => string
-}) {
-  const changed = before !== after
-  const down = after < before
-  const good = goodWhenDown ? down : !down
-  return (
-    <div className="delta-row">
-      <span className="delta-label">{label}</span>
-      <span className="delta-before">{format(before)}</span>
-      <span className="delta-arrow">→</span>
-      <span className="delta-after">{format(after)}</span>
-      {changed ? (
-        <span className={cx('delta-tag', good ? 'is-good' : 'is-bad')}>
-          {down ? '−' : '+'}
-          {format(Math.abs(after - before))}
-        </span>
-      ) : (
-        <span className="delta-tag is-flat">—</span>
-      )}
-    </div>
-  )
-}
-
 export function Inspector({
   dataset,
   baseline,
+  origins,
   column,
   steps,
   cursor,
@@ -95,6 +64,7 @@ export function Inspector({
   const [filterOp, setFilterOp] = useState<FilterOp>('gt')
   const [filterValue, setFilterValue] = useState('')
   const [renameValue, setRenameValue] = useState(column.name)
+  const [opsOpen, setOpsOpen] = useState(false)
   const stats = column.numeric
   const numericText = column.type === 'text' && column.issues.some((i) => i.code === 'THOUSANDS_SEP')
 
@@ -132,10 +102,6 @@ export function Inspector({
   const dropColumn = () => {
     onRun({ kind: 'dropColumn', colIndex: column.index, colName: column.name })
   }
-
-  const totalOutliers = (ds: Dataset) =>
-    ds.columns.reduce((a, c) => a + (c.numeric?.outliers ?? 0), 0)
-  const changedCols = diff ? diff.changedByColumn.filter((n) => n > 0).length : 0
 
   return (
     <aside className="inspector">
@@ -284,10 +250,13 @@ export function Inspector({
         </div>
       </section>
 
-      <details className="panel more-ops">
+      <details
+        className="panel more-ops"
+        onToggle={(e) => setOpsOpen(e.currentTarget.open)}
+      >
         <summary className="panel-head">
           行筛选 / 列操作
-          <span className="panel-hint">点开</span>
+          <span className="panel-hint">{opsOpen ? '收起' : '点击'}</span>
         </summary>
         <div className="panel-body">
           <div className="ops-sub-title">行筛选 · 保留符合条件的行</div>
@@ -370,50 +339,21 @@ export function Inspector({
         </div>
       </details>
 
-      <section className="panel">
-        <div className="panel-head">
-          清洗前后对比
-          <span className="panel-hint">
-            <button className="link-btn" disabled={!canUndo || busy} onClick={onUndo}>
-              撤销
-            </button>
-            <button className="link-btn" disabled={!canRedo || busy} onClick={onRedo}>
-              重做
-            </button>
-          </span>
-        </div>
-        <div className="panel-body">
-          {baseline && diff && diff.changedCells + diff.removedRows > 0 ? (
-            <>
-              <Delta label="行数" before={baseline.meta.rowCount} after={dataset.meta.rowCount} />
-              <Delta
-                label="空单元格"
-                before={baseline.meta.missingCells}
-                after={dataset.meta.missingCells}
-              />
-              <Delta
-                label="重复行"
-                before={baseline.meta.duplicateRows}
-                after={dataset.meta.duplicateRows}
-              />
-              <Delta label="异常值" before={totalOutliers(baseline)} after={totalOutliers(dataset)} />
-              <Delta
-                label="质量分"
-                before={baseline.meta.score}
-                after={dataset.meta.score}
-                goodWhenDown={false}
-              />
-              <div className="delta-foot">
-                改动 <b>{int(diff.changedCells)}</b> 个单元格
-                {changedCols > 0 ? `，涉及 ${changedCols} 列` : ''}
-                {diff.removedRows > 0 ? `，删除 ${int(diff.removedRows)} 行` : ''}
-              </div>
-            </>
-          ) : (
-            <div className="log-empty">还没做清洗，做一步就会显示前后差异</div>
-          )}
-        </div>
-      </section>
+      {/* 辅助功能：模板 / 前后对比 / 校验报告，可折叠 */}
+      <AuxPanel
+        dataset={dataset}
+        baseline={baseline}
+        origins={origins}
+        steps={steps}
+        cursor={cursor}
+        diff={diff}
+        busy={busy}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={onUndo}
+        onRedo={onRedo}
+        onOpenTemplates={onOpenTemplates}
+      />
 
       <section className="panel panel-grow">
         <div className="panel-head">
