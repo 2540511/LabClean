@@ -19,7 +19,12 @@ import {
 } from '../src/core/clean'
 import { replay, type OpSpec } from '../src/core/pipeline'
 import { computeDiff } from '../src/lib/diff'
-import { normalRange, resolveBinCount } from '../src/lib/analyze'
+import {
+  DEFAULT_OUTLIER_SETTINGS,
+  isOutlierValue,
+  normalRange,
+  resolveBinCount,
+} from '../src/lib/analyze'
 import { buildCompareSheets, buildReportSheets } from '../src/core/report'
 import { sourceMetrics, type DataSource } from '../src/core/compare'
 import {
@@ -587,7 +592,7 @@ console.log('\n[15] 表头识别（多行标题的真实报表）')
   eq('第一行数据没有被标题污染', ds.rows[0].slice(0, 2), ['20260101', '杨浩然'])
   check(
     '最后一行是汇总行时给出提示',
-    ds.meta.notes.some((n) => n.includes('汇总行')),
+    ds.meta.notes.some((n) => n.includes('合计/统计行')),
     JSON.stringify(ds.meta.notes),
   )
 
@@ -640,6 +645,59 @@ console.log('\n[17] 直方图分箱设置')
   }
   // 组距非法时退回自动，不能除零或产生 NaN 组数
   check('组距为 0 时退回自动', resolveBinCount({ mode: 'width', w: 0 }, col, 100) === 10)
+}
+
+console.log('\n[18] 合计/统计行与列不报异常')
+{
+  // 合计行：241 在数据里是明显的极端值，但它不是脏数据
+  const csv = ['姓名,分数', '张三,80', '李四,82', '王五,79', '合计,241'].join('\n')
+  const ds = buildDataset('t.csv', '数据', parseCsv(csv))
+  eq('识别出 1 行合计行', ds.meta.summaryRows, 1)
+  eq('合计行是最后一行', ds.meta.summaryRowIndexes, [3])
+  eq('合计值不进 min/max', [ds.columns[1].numeric!.min, ds.columns[1].numeric!.max], [79, 82])
+  eq('合计行不产生异常值', ds.columns[1].numeric!.outliers, 0)
+  check(
+    '提示里说明了排除',
+    ds.meta.notes.some((n) => n.includes('合计/统计行')),
+    ds.meta.notes.join(' | '),
+  )
+
+  // 对照：不告诉判定函数「这是合计行」的话，241 本来会被判成异常
+  const col = ds.columns[1]
+  check('同一行的值当普通数据会被判异常', isOutlierValue(241, col, DEFAULT_OUTLIER_SETTINGS, false))
+  check('标为合计行后不再判异常', !isOutlierValue(241, col, DEFAULT_OUTLIER_SETTINGS, true))
+
+  // 合计列：总分是算出来的，不该被标红
+  const sumCsv = ['姓名,语文,总分', '张三,80,160', '李四,82,170', '王五,79,155'].join('\n')
+  const sumDs = buildDataset('s.csv', '数据', parseCsv(sumCsv))
+  check('「总分」列被认成合计列', sumDs.columns[2].summary === true, String(sumDs.columns[2].summary))
+  eq('合计列不做异常值判定', sumDs.columns[2].numeric!.outliers, 0)
+  check(
+    '合计列给出 info 提示',
+    sumDs.columns[2].issues.some((i) => i.code === 'SUMMARY_ROW' && i.severity === 'info'),
+    sumDs.columns[2].issues.map((i) => i.code).join(','),
+  )
+  check('普通列仍然照常判定', sumDs.columns[1].summary !== true)
+
+  // 统计汇总表：整张都是算出来的数
+  const sheetCsv = ['统计项,结果', '学生人数,300', '平均年龄,16.18', '总分最高,569'].join('\n')
+  const sheetDs = buildDataset('x.csv', '统计汇总', parseCsv(sheetCsv))
+  eq('整张表被判为统计汇总表', sheetDs.meta.summarySheet, true)
+  eq('统计汇总表不产生异常值', sheetDs.columns[1].numeric!.outliers, 0)
+  check(
+    '提示里说明是统计汇总表',
+    sheetDs.meta.notes.some((n) => n.includes('统计汇总表')),
+    sheetDs.meta.notes.join(' | '),
+  )
+
+  // 普通数据不该受影响：没有合计行时照样能发现异常
+  const plainDs = buildDataset('p.csv', '数据', parseCsv('温度\n20\n21\n19\n20\n999\n'))
+  eq('普通表没有识别到合计行', plainDs.meta.summaryRows, 0)
+  check(
+    '普通表的 999 仍然是异常值',
+    plainDs.columns[0].numeric!.outliers === 1,
+    String(plainDs.columns[0].numeric!.outliers),
+  )
 }
 
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)

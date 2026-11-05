@@ -81,6 +81,7 @@ export function analyzeColumn(
   rows: CellValue[][],
   col: Column,
   binCountOverride?: number,
+  summaryRows?: Set<number>,
 ): ColumnAnalysis | null {
   const stats = col.numeric
   if (col.type !== 'number' || !stats || !Number.isFinite(stats.min) || !Number.isFinite(stats.max)) {
@@ -114,16 +115,18 @@ export function analyzeColumn(
   let outlierCount = 0
 
   for (let r = 0; r < rows.length; r++) {
+    // 合计/统计行不参与这张图：它的值本来就不是一个观测点
+    if (summaryRows?.has(r)) continue
     const v = rows[r][col.index]
     if (typeof v !== 'number') continue
     seen++
     reservoirPush(points, v, seen)
 
-    if (v < lo) {
+    if (!col.summary && v < lo) {
       lowCount++
       outlierCount++
       if (outlierRows.size < MAX_OUTLIER_ROWS) outlierRows.add(r)
-    } else if (v > hi) {
+    } else if (!col.summary && v > hi) {
       highCount++
       outlierCount++
       if (outlierRows.size < MAX_OUTLIER_ROWS) outlierRows.add(r)
@@ -205,7 +208,10 @@ export function isOutlierValue(
   v: CellValue,
   col: Column,
   settings: OutlierSettings = DEFAULT_OUTLIER_SETTINGS,
+  summaryRow = false,
 ): boolean {
+  // 合计/统计列与合计/统计行都不算异常：这些数是算出来的，不是脏数据
+  if (col.summary || summaryRow) return false
   if (typeof v !== 'number') return false
   const fences = outlierFences(col, settings)
   if (!fences) return false

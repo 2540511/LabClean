@@ -14,6 +14,8 @@ export type IssueCode =
   | 'LEADING_ZERO'
   | 'THOUSANDS_SEP'
   | 'DUPLICATE_HEADER'
+  /** 合计/统计行或列：本身是对的，只是不该参与异常值判定 */
+  | 'SUMMARY_ROW'
 
 export interface ColumnIssue {
   code: IssueCode
@@ -55,6 +57,8 @@ export interface Column {
   score: number
   numeric?: NumericStats
   top: { value: string; count: number }[]
+  /** 这一列是合计/统计列（如「总分」「合计」），不参与异常值判定 */
+  summary?: boolean
 }
 
 export interface DatasetMeta {
@@ -70,6 +74,12 @@ export interface DatasetMeta {
   notes: string[]
   /** 公式单元格里没有保存计算结果的数量（导入后这些格子是空的） */
   formulaOnly?: number
+  /** 识别到的合计/统计行数（这些行不参与异常值判定） */
+  summaryRows?: number
+  /** 合计/统计行的行下标（当前数据里的 0 基下标） */
+  summaryRowIndexes?: number[]
+  /** 整张表就是统计汇总表（统计项 / 结果），不做异常值判定 */
+  summarySheet?: boolean
 }
 
 export interface Dataset {

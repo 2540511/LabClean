@@ -18,8 +18,68 @@ const DUP_SCAN_LIMIT = 300_000
 /** 异常值判定：修正 Z 分数阈值（Iglewicz & Hoaglin 推荐 3.5） */
 const OUTLIER_Z = 3.5
 
-/** 汇总行的常见开头（合计 / 年级平均 / 小计 …），只用来提示，不自动删除 */
-const SUMMARY_ROW_RE = /^(合计|总计|小计|汇总|平均|总计|年级平均|全班平均|本页合计)/
+/**
+ * 汇总行/列的关键词。
+ *
+ * 「合计 2400」「平均分 78.3」这类本来就是算出来的数，跟逐行数据不是一个量级，
+ * 拿去做中位数/MAD 判定必然被当成异常值 —— 那不是数据错，而是判据用错了对象。
+ * 所以命中这些词的**行**不参与异常值统计，命中的**列**不做异常值判定。
+ */
+const SUMMARY_WORDS = [
+  '合计',
+  '总计',
+  '小计',
+  '共计',
+  '总和',
+  '汇总',
+  '统计',
+  '平均',
+  '均值',
+  '中位数',
+  '标准差',
+  '方差',
+  '最大',
+  '最小',
+  '最高',
+  '最低',
+  '总数',
+  '总人数',
+  '总成绩',
+  '总分',
+  '及格率',
+  '优秀率',
+  '占比',
+]
+
+const SUMMARY_WORDS_EN = /^(total|sum|subtotal|average|avg|mean|max|min|count)\b/i
+
+/** 行标签是不是「合计 / 平均分 / 总计（元）」这类汇总标签 */
+export function isSummaryLabel(v: CellValue): boolean {
+  if (v === null || v === undefined) return false
+  if (typeof v === 'number' || typeof v === 'boolean' || v instanceof Date) return false
+  const s = rawText(v).trim()
+  if (s === '' || s.length > 20) return false
+  if (SUMMARY_WORDS_EN.test(s)) return true
+  return SUMMARY_WORDS.some((w) => s.includes(w))
+}
+
+/** 列名是不是合计/统计列（「总分」「合计」「平均值」…） */
+export function isSummaryHeader(name: string): boolean {
+  const s = name.trim()
+  if (s === '') return false
+  if (SUMMARY_WORDS_EN.test(s)) return true
+  return SUMMARY_WORDS.some((w) => s.includes(w))
+}
+
+const SUMMARY_SHEET_LABEL_RE = /^(统计项|统计指标|指标|项目|名称|统计|項目)$/
+const SUMMARY_SHEET_VALUE_RE = /^(结果|数值|值|合计|总计|数据)$/
+
+/** 整张表是不是「统计项 / 结果」这种汇总表（只有两列名字时最容易判断） */
+function isSummarySheet(headers: string[]): boolean {
+  if (headers.length === 0 || headers.length > 4) return false
+  const hit = (re: RegExp) => headers.some((h) => re.test(h.trim()))
+  return hit(SUMMARY_SHEET_LABEL_RE) && hit(SUMMARY_SHEET_VALUE_RE)
+}
 
 export interface RawSheet {
   name: string
@@ -189,6 +249,7 @@ function buildIssues(args: {
   outliers: number
   invalid: number
   nonBlank: number
+  summary?: boolean
 }): ColumnIssue[] {
   const out: ColumnIssue[] = []
   const { acc, type, missing, distinct, outliers, invalid, nonBlank } = args
@@ -196,6 +257,14 @@ function buildIssues(args: {
   if (nonBlank === 0) {
     out.push({ code: 'EMPTY_COLUMN', severity: 'error', count: 0, message: '整列都是空的' })
     return out
+  }
+  if (args.summary) {
+    out.push({
+      code: 'SUMMARY_ROW',
+      severity: 'info',
+      count: 0,
+      message: '这一列是合计/统计列，数值本身是对的，不参与异常值判定',
+    })
   }
   if (missing > 0) {
     out.push({
@@ -346,6 +415,24 @@ export function profileRows(
   const accs: Acc[] = []
   for (let c = 0; c < width; c++) accs.push(newAcc())
 
+  // ---- 第零遍：认出合计/统计行与合计/统计列 ----
+  // 只看前两列的行标签（通常「合计」写在最左边），避免把「统计部」这类普通数据误判
+  const summaryRowIdx = new Set<number>()
+  const labelCols = Math.min(width, 2)
+  for (let r = 0; r < n; r++) {
+    const row = rows[r]
+    for (let c = 0; c < labelCols; c++) {
+      if (isSummaryLabel(row[c] ?? null)) {
+        summaryRowIdx.add(r)
+        break
+      }
+    }
+  }
+  const summaryCols = headers.map((h) => isSummaryHeader(h))
+  const summarySheet = isSummarySheet(headers)
+  // 统计汇总表整张都是算出来的数，不做异常值判定
+  const noOutlierCheck = summarySheet
+
   // ---- 第一遍：类型识别 + 数值采样 + 重复行哈希 ----
   const checkDup = n <= DUP_SCAN_LIMIT
   const seenRows = checkDup ? new Set<string>() : null
@@ -367,9 +454,13 @@ export function profileRows(
         case 'number': {
           acc.number++
           const num = Number(v)
-          pushReservoir(acc, num)
-          if (num < acc.min) acc.min = num
-          if (num > acc.max) acc.max = num
+          // 汇总行（合计/平均/总计…）不进蓄水池，也不参与 min/max，
+          // 否则一个「合计 2400」会把中位数/MAD 的判据整体带偏
+          if (!summaryRowIdx.has(r)) {
+            pushReservoir(acc, num)
+            if (num < acc.min) acc.min = num
+            if (num > acc.max) acc.max = num
+          }
           break
         }
         case 'leadingZero':
@@ -468,17 +559,21 @@ export function profileRows(
     const acc = accs[c]
     if (acc.resTotal === 0) continue
     const stats = numericStats(acc)
-    let low = 0
-    let high = 0
-    for (let r = 0; r < n; r++) {
-      const v = rows[r][c]
-      if (typeof v !== 'number') continue
-      if (v < stats.lowFence) low++
-      else if (v > stats.highFence) high++
+    if (!noOutlierCheck && !summaryCols[c]) {
+      let low = 0
+      let high = 0
+      for (let r = 0; r < n; r++) {
+        // 合计/统计行不参与异常值判定：它们的值本来就是加总出来的
+        if (summaryRowIdx.has(r)) continue
+        const v = rows[r][c]
+        if (typeof v !== 'number') continue
+        if (v < stats.lowFence) low++
+        else if (v > stats.highFence) high++
+      }
+      stats.outliers = low + high
+      stats.outliersLow = low
+      stats.outliersHigh = high
     }
-    stats.outliers = low + high
-    stats.outliersLow = low
-    stats.outliersHigh = high
     numericStatsList[c] = stats
   }
 
@@ -509,6 +604,8 @@ export function profileRows(
       outliers: numeric?.outliers ?? 0,
       invalid: invalidCounts[c],
       nonBlank,
+      // 只有数值列才有「合计列」的意义，文本列（如「统计项」）不标
+      summary: summaryCols[c] && types[c] === 'number',
     })
 
     const score = scoreColumn({
@@ -536,6 +633,7 @@ export function profileRows(
       score,
       numeric,
       top,
+      summary: (summaryCols[c] && types[c] === 'number') || undefined,
     })
   }
 
@@ -557,14 +655,21 @@ export function profileRows(
     )
   }
 
-  // 最后一行像是「合计 / 平均 / 小计」这类汇总行：不自动删，只提醒
-  if (n > 2) {
-    const lastText = rawText(rows[n - 1][0] ?? null).trim()
-    if (SUMMARY_ROW_RE.test(lastText)) {
-      notes.push(
-        `最后一行「${lastText.slice(0, 12)}」看起来是汇总行（合计/平均之类），如果它不该参与统计，可以用「行筛选」把它排除`,
-      )
-    }
+  // 合计/统计行与列：它们本身是对的，只是不该被当成异常值
+  if (summaryRowIdx.size > 0 && !summarySheet) {
+    notes.push(
+      `识别到 ${summaryRowIdx.size} 行合计/统计行（如「合计」「平均分」），已从异常值判定和中位数/标准差里排除`,
+    )
+  }
+  const sumColNames = headers.filter((_, i) => summaryCols[i] && types[i] === 'number')
+  if (sumColNames.length > 0 && !summarySheet) {
+    const shown = sumColNames.slice(0, 3).join('、')
+    notes.push(
+      `列「${shown}${sumColNames.length > 3 ? ' 等' : ''}」看起来是合计/统计列，不做异常值判定（数值照常统计）`,
+    )
+  }
+  if (summarySheet) {
+    notes.push('这张表看起来是统计汇总表（统计项 / 结果），整表不做异常值判定')
   }
 
   return {
@@ -585,6 +690,9 @@ export function profileRows(
       source: opts.source ?? '',
       notes,
       formulaOnly,
+      summaryRows: summaryRowIdx.size,
+      summaryRowIndexes: [...summaryRowIdx].sort((a, b) => a - b),
+      summarySheet: summarySheet || undefined,
     },
   }
 }

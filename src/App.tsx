@@ -580,7 +580,8 @@ export default function App() {
 
   const analysis = useMemo(() => {
     if (!dataset || !currentColumn) return null
-    return analyzeColumn(dataset.rows, currentColumn, binCount)
+    const summary = new Set<number>(dataset.meta.summaryRowIndexes ?? [])
+    return analyzeColumn(dataset.rows, currentColumn, binCount, summary)
   }, [dataset, currentColumn, binCount])
 
   /** 自动模式下实际会用的组数（给设置面板显示） */
@@ -602,8 +603,10 @@ export default function App() {
     if (!dataset) return []
     const col = dataset.columns[selected]
     if (!col?.numeric) return []
+    const summary = new Set<number>(dataset.meta.summaryRowIndexes ?? [])
     const out: { row: number; value: number }[] = []
     for (let r = 0; r < dataset.rows.length && out.length < 500; r++) {
+      if (summary.has(r)) continue
       const v = dataset.rows[r][selected]
       if (typeof v === 'number' && isOutlierValue(v, col, outlierSettings)) {
         out.push({ row: r, value: v })
@@ -630,12 +633,14 @@ export default function App() {
   const outlierCount = useMemo(() => {
     if (!dataset || redColumns.size === 0) return 0
     if (dataset.rows.length > 500_000) return -1
+    const summary = new Set<number>(dataset.meta.summaryRowIndexes ?? [])
     let total = 0
     for (const c of redColumns) {
       const col = dataset.columns[c]
       if (!col?.numeric) continue
-      for (const row of dataset.rows) {
-        if (isOutlierValue(row[c] ?? null, col, outlierSettings)) total++
+      for (let r = 0; r < dataset.rows.length; r++) {
+        if (summary.has(r)) continue
+        if (isOutlierValue(dataset.rows[r][c] ?? null, col, outlierSettings)) total++
       }
     }
     return total

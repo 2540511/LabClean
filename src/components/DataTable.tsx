@@ -103,6 +103,11 @@ export function DataTable({
 
   const rows = dataset.rows
   const columns = dataset.columns
+  // 合计/统计行的下标：这些行不标红、不计入异常值
+  const summaryRows = useMemo(
+    () => new Set<number>(dataset.meta.summaryRowIndexes ?? []),
+    [dataset],
+  )
   const start = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN)
   const end = Math.min(rows.length, Math.ceil((scrollTop + viewH) / ROW_H) + OVERSCAN)
 
@@ -177,13 +182,17 @@ export function DataTable({
           <div className="tbody" style={{ height: rows.length * ROW_H }}>
             {visible.map((r) => {
               const row = rows[r]
+              // 合计/统计行：数值是算出来的，不标红
+              const isSummaryRow = summaryRows.has(r)
               // 这一行里有没有「需要标红的列」出了异常值 —— 用列上算好的稳健上下界判断，不用扫全表
               let isOutlierRow = false
-              for (const c of redColumns) {
-                const col = columns[c]
-                if (col && isOutlierValue(row[c] ?? null, col, outlierSettings)) {
-                  isOutlierRow = true
-                  break
+              if (!isSummaryRow) {
+                for (const c of redColumns) {
+                  const col = columns[c]
+                  if (col && isOutlierValue(row[c] ?? null, col, outlierSettings, isSummaryRow)) {
+                    isOutlierRow = true
+                    break
+                  }
                 }
               }
               return (
@@ -207,7 +216,8 @@ export function DataTable({
                   {columns.map((col, c) => {
                     const v = row[c] ?? null
                     const empty = isBlank(v)
-                    const isOutlierCell = redColumns.has(c) && isOutlierValue(v, col, outlierSettings)
+                    const isOutlierCell =
+                      redColumns.has(c) && isOutlierValue(v, col, outlierSettings, isSummaryRow)
                     const sourceRow = compare ? compare.rows[compare.origins[r]] : undefined
                     const oldValue = compare && sourceRow ? (sourceRow[c] ?? null) : null
                     const changed = compare && sourceRow ? !sameCell(oldValue, v) : false
