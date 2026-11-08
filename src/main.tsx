@@ -33,9 +33,17 @@ function showFatal(title: string, detail: string): void {
   host.appendChild(box)
 }
 
+/**
+ * ResizeObserver 循环告警是浏览器的无害通知（一帧内观察回调没跑完），
+ * 不是应用错误；若当成致命错误会把正常工作的界面整个替换成错误页。
+ */
+const BENIGN_ERROR_RE = /ResizeObserver loop (completed with undelivered notifications|limit exceeded)/
+
 window.addEventListener('error', (e) => {
   const err = e.error as Error | undefined
-  showFatal(err?.message ?? e.message ?? '未知错误', String(err?.stack ?? ''))
+  const message = err?.message ?? e.message ?? ''
+  if (BENIGN_ERROR_RE.test(message)) return
+  showFatal(message || '未知错误', String(err?.stack ?? ''))
 })
 window.addEventListener('unhandledrejection', (e) => {
   const reason = e.reason as Error | undefined

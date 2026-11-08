@@ -57,6 +57,9 @@ export function coerceNumber(v: CellValue): number | null {
   if (typeof v === 'boolean') return v ? 1 : 0
   if (typeof v !== 'string') return null
   const s = v.trim().replace(/[,\s，]/g, '')
+  // 和 classify 保持一致：16 位以上的整数按文本处理，
+  // 否则 Number() 会把末几位悄悄改掉（身份证 / 订单号事故）
+  if (/^[+-]?\d{16,}$/.test(s)) return null
   if (s === '' || !NUMBER_RE.test(s)) return null
   const n = Number(s)
   return Number.isFinite(n) ? n : null

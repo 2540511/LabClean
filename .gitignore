@@ -8,6 +8,8 @@ dist/
 src-tauri/target/
 .rust/
 release/
+# Windows 快捷方式（二进制，且内含本机绝对路径）
+*.lnk
 
 # 临时安装器
 rustup-init.exe

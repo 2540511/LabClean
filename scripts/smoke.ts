@@ -43,6 +43,8 @@ import {
   templateStepLabel,
   toTemplateSteps,
 } from '../src/core/template'
+import { classifyField, classifyFields, recommendCharts } from '../src/core/recommend'
+import { scatterSeries, timeSeries } from '../src/lib/series'
 
 let passed = 0
 const failures: string[] = []
@@ -735,6 +737,127 @@ console.log('\n[19] 校验报告文本')
   // 没做过清洗也要有明确说明
   const none = buildCheckReport({ dataset: base, baseline: base, steps: [], cursor: 0 })
   check('未清洗时说明按原始状态', none.includes('清洗步骤：无'), none)
+}
+
+console.log('\n[20] 智能推荐图表（字段类型判定 + 图表推荐 + 序列抽取）')
+{
+  // day=时间, temp=数值(含离群 999), hum=数值, cat=低基数文本(类别), sn=每行唯一文本(编号)
+  const ds = buildDataset(
+    'rec.csv',
+    '数据',
+    parseCsv('day,temp,hum,cat,sn\n2024-01-01,10,50,A,s1\n2024-01-02,20,55,A,s2\n2024-01-03,30,60,B,s3\n2024-01-04,40,65,B,s4\n2024-01-05,999,70,A,s5\n'),
+  )
+  eq('行数', ds.meta.rowCount, 5)
+
+  // 字段类型判定
+  const byName = (n: string) => ds.columns.find((c) => c.name === n)!
+  eq('日期列判为时间序列', classifyField(byName('day'), 5), 'time')
+  eq('数值列判为度量', classifyField(byName('temp'), 5), 'measure')
+  eq('低基数文本判为类别', classifyField(byName('cat'), 5), 'category')
+  eq('每行唯一的文本判为编号', classifyField(byName('sn'), 5), 'id')
+  const infos = classifyFields(ds)
+  eq('classifyFields 覆盖全部列', infos.length, ds.columns.length)
+  eq('编号列不可画图', infos.find((f) => f.name === 'sn')!.chartable, false)
+  eq('度量列可画图', infos.find((f) => f.name === 'temp')!.chartable, true)
+
+  // 图表推荐
+  const plans = recommendCharts(ds)
+  const kinds = plans.map((p) => p.kind)
+  check('推荐了直方图', kinds.includes('histogram'))
+  check('对有离群点的数值列推荐了箱线图', kinds.includes('boxplot'))
+  check('推荐了条形图', kinds.includes('bar'))
+  check('有时间列+数值列时推荐了折线图', kinds.includes('line'))
+  check('有两个数值列时推荐了散点图', kinds.includes('scatter'))
+  const boxTargets = plans.filter((p) => p.kind === 'boxplot').map((p) => p.colName)
+  eq('箱线图只针对检出离群点的列', boxTargets, ['temp'])
+  const line = plans.find((p) => p.kind === 'line')!
+  eq('折线图时间轴选日期列', line.colName, 'day')
+  eq('折线图数值选首要度量列', line.secondName, 'temp')
+  const scatter = plans.find((p) => p.kind === 'scatter')!
+  eq('散点图 X 为第一度量', scatter.colName, 'temp')
+  eq('散点图 Y 为第二度量', scatter.secondName, 'hum')
+  check('每条推荐都带场景说明', plans.every((p) => p.scenario.length > 0 && p.reason.length > 0))
+
+  // 时间序列抽取：按日期升序聚合均值
+  const ts = timeSeries(ds.rows, byName('day').index, byName('temp').index)
+  eq('时间点数量', ts.length, 5)
+  eq('时间升序', ts.map((p) => p.label), ['2024-01-01', '2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'])
+  eq('每个时间点单行即原值', ts.map((p) => p.value), [10, 20, 30, 40, 999])
+
+  // 散点抽取：有效点对 + 相关系数 + 回归线
+  const sc = scatterSeries(ds.rows, byName('temp').index, byName('hum').index)
+  eq('有效点对数', sc.n, 5)
+  eq('抽样点数不超过点对数', sc.points.length, 5)
+  check('相关系数有限', Number.isFinite(sc.r), `r=${sc.r}`)
+  check('temp 与 hum 正相关', sc.r > 0.5, `r=${sc.r}`)
+  check('能拟合回归线', sc.line !== null && Number.isFinite(sc.line!.slope))
+
+  // 边界：缺列 / 无数值不崩
+  eq('没有数值列时不推荐散点', recommendCharts(buildDataset('t.csv', '数据', parseCsv('a,b\nx,y\np,q\n'))).filter((p) => p.kind === 'scatter').length, 0)
+}
+
+console.log('\n[21] 体检口径回归（baseline 写时复制 / 类型阈值 / 唯一值 / 众数 / 时间聚合）')
+{
+  // 少量脏值不该把整列判成文本
+  const noisy: string[][] = [['温度']]
+  for (let i = 0; i < 500; i++) noisy.push([String(10 + i)])
+  noisy.push(['01'])
+  eq('单个前导零不改变数值判定', buildDataset('n1.csv', '数据', noisy).columns[0].type, 'number')
+
+  const noisy2: string[][] = [['读数']]
+  for (let i = 0; i < 500; i++) noisy2.push([String(10 + i)])
+  noisy2.push(['1,234'])
+  eq('单个千分位不改变数值判定', buildDataset('n2.csv', '数据', noisy2).columns[0].type, 'number')
+
+  const ids = buildDataset('n3.csv', '数据', [['编号'], ['001'], ['002'], ['003']])
+  eq('编号列仍按文本保留', ids.columns[0].type, 'text')
+
+  // 数值列的唯一值是真唯一值
+  const dv = buildDataset('n4.csv', '数据', [['v'], ['1'], ['2'], ['2'], ['3'], ['3']])
+  eq('数值列唯一值', dv.columns[0].distinct, 3)
+
+  // 数值列的「出现最多的值」填充真的会填
+  const mv = buildDataset('n5.csv', '数据', [
+    ['v', 'note'],
+    ['1', 'a'],
+    ['2', 'b'],
+    ['2', 'c'],
+    ['', 'd'],
+    ['3', 'e'],
+  ])
+  const mode = resolveFillValue(mv.columns[0], 'mode')
+  eq('数值众数取到 2', mode, 2)
+  eq('数值列众数填充生效', opFillMissing(mv.rows, 0, 'v', mode).affected, 1)
+
+  // 清洗重算不能改写 baseline
+  const baseRows: string[][] = [['id', 'v']]
+  for (let i = 0; i < 17; i++) baseRows.push([String(i), String(100 + i)])
+  baseRows.push(['17', 'N/A'], ['18', 'N/A'])
+  const base = buildDataset('n6.csv', '数据', baseRows)
+  eq('少量坏值仍判为文本', base.columns[1].type, 'text')
+  const kept = replay(base.rows, base.columns, [{ kind: 'dropRows', indices: [18, 19] }])
+  eq('删掉坏行后翻成数值', rebuildDataset(base, kept.rows).columns[1].type, 'number')
+  eq('baseline 原值仍是字符串', base.rows[0][1], '100')
+
+  // 同一天多个时刻按天聚合
+  const t = buildDataset(
+    'n7.csv',
+    '数据',
+    parseCsv('day,v\n2024-01-01 08:00,10\n2024-01-01 20:00,20\n2024-01-02 08:00,30\n'),
+  )
+  const ts = timeSeries(t.rows, 0, 1)
+  eq('同一天只留一个时间点', ts.length, 2)
+  eq('同一天取均值', ts[0].value, 15)
+
+  // 数值型编号不推荐直方图
+  const idRows: string[][] = [['学号', '成绩']]
+  for (let i = 0; i < 60; i++) idRows.push([String(20260101 + i), String(60 + i)])
+  const idDs = buildDataset('n8.csv', '数据', idRows)
+  eq('学号列判为编号', classifyField(idDs.columns[0], idDs.meta.rowCount), 'id')
+  check(
+    '学号不推荐直方图',
+    recommendCharts(idDs).every((p) => !(p.kind === 'histogram' && p.colName === '学号')),
+  )
 }
 
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)

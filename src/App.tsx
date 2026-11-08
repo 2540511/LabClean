@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChartsDock } from './components/ChartsDock'
 import { CompareView } from './components/CompareView'
 import { DataTable } from './components/DataTable'
+import { InsightsView } from './components/InsightsView'
 import { EmptyState } from './components/EmptyState'
 import { FuzzyDialog } from './components/FuzzyDialog'
 import { Inspector } from './components/Inspector'
@@ -90,9 +91,10 @@ function makeSource(
 export default function App() {
   const [sources, setSources] = useState<DataSource[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [view, setView] = useState<'table' | 'compare'>(() =>
-    new URLSearchParams(window.location.search).get('view') === 'compare' ? 'compare' : 'table',
-  )
+  const [view, setView] = useState<'table' | 'compare' | 'insights'>(() => {
+    const v = new URLSearchParams(window.location.search).get('view')
+    return v === 'compare' || v === 'insights' ? v : 'table'
+  })
   const [selected, setSelected] = useState(0)
   /** 表格里手动点选的行（0 基下标），用于逐行删除 */
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set())
@@ -719,6 +721,13 @@ export default function App() {
               数据对比
               {sources.length > 1 ? <span className="vs-count">{sources.length}</span> : null}
             </button>
+            <button
+              role="tab"
+              className={view === 'insights' ? 'vs-btn is-active' : 'vs-btn'}
+              onClick={() => setView('insights')}
+            >
+              智能图表
+            </button>
           </div>
         ) : null}
 
@@ -806,6 +815,8 @@ export default function App() {
           }}
           onAdd={() => inputRef.current?.click()}
         />
+      ) : view === 'insights' && dataset ? (
+        <InsightsView dataset={dataset} />
       ) : dataset && currentColumn && active && pipeline ? (
         <div className="body">
           <Rail

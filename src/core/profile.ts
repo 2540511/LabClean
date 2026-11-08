@@ -213,9 +213,11 @@ function numericStats(acc: Acc): NumericStats {
 function decideType(acc: Acc): ColumnType {
   const nonBlank = acc.number + acc.date + acc.boolean + acc.text + acc.leadingZero + acc.thousands
   if (nonBlank === 0) return 'text'
-  // 前导零、千分位一旦出现，说明这列是「带格式的编号」，必须按文本保留
-  if (acc.leadingZero > 0 || acc.thousands > 0) return 'text'
-  const numeric = acc.number / nonBlank
+  // 前导零 / 千分位占到一定比例，才说明这列本来就是「带格式的编号」，按文本保留。
+  // 一个 01 或 1,234 混在几千个正常数字里，不该把整列判成文本（否则这列没法统计、没法画图）。
+  const formatted = acc.leadingZero + acc.thousands
+  if (formatted / nonBlank > 0.05) return 'text'
+  const numeric = (acc.number + formatted) / nonBlank
   if (numeric >= 0.9) return 'number'
   if (acc.date / nonBlank >= 0.9) return 'date'
   if (acc.boolean / nonBlank >= 0.9) return 'boolean'
@@ -306,7 +308,10 @@ function buildIssues(args: {
       code: 'LEADING_ZERO',
       severity: 'info',
       count: acc.leadingZero,
-      message: `${acc.leadingZero} 个值带前导零，已按文本保留（避免去掉 0）`,
+      message:
+        type === 'text'
+          ? `${acc.leadingZero} 个值带前导零，已按文本保留（避免去掉 0）`
+          : `${acc.leadingZero} 个值带前导零，属于格式不一致（本列其余值是数字）`,
     })
   }
   if (acc.thousands > 0) {
@@ -314,7 +319,10 @@ function buildIssues(args: {
       code: 'THOUSANDS_SEP',
       severity: 'info',
       count: acc.thousands,
-      message: `${acc.thousands} 个值含千分位逗号，已按文本保留`,
+      message:
+        type === 'text'
+          ? `${acc.thousands} 个值含千分位逗号，已按文本保留`
+          : `${acc.thousands} 个值含千分位逗号，属于格式不一致（本列其余值是数字）`,
     })
   }
   return out
@@ -401,14 +409,27 @@ export function profileRows(
   opts: { source?: string; elapsedMs?: number; id?: string; formulaOnly?: number } = {},
 ): Dataset {
   const width = headers.length
-  const rows = rowsIn
-  const n = rows.length
+  const n = rowsIn.length
+
+  // 写时复制：rebuildDataset 会把 baseline 的行数组原样传进来，
+  // 如果就地补 null / 把文本转成数字，baseline 就被悄悄改写了（撤销也回不去）。
+  // 只复制真正需要改动的那几行，其余行继续共用。
+  const rows = rowsIn.slice()
+  const owned = new Uint8Array(n)
+  const ownRow = (r: number): CellValue[] => {
+    if (!owned[r]) {
+      rows[r] = rows[r].slice()
+      owned[r] = 1
+    }
+    return rows[r]
+  }
 
   // 补齐每行长度，避免后面到处判空
   for (let r = 0; r < n; r++) {
     const row = rows[r]
     if (row.length < width) {
-      for (let c = row.length; c < width; c++) row.push(null)
+      const target = ownRow(r)
+      for (let c = row.length; c < width; c++) target.push(null)
     }
   }
 
@@ -508,14 +529,9 @@ export function profileRows(
   const distinctApprox = new Array<boolean>(width).fill(false)
 
   for (let c = 0; c < width; c++) {
-    const t = types[c]
-    if (t === 'number') {
-      distinctSets.push(null)
-      topMaps.push(null)
-    } else {
-      distinctSets.push(new Set<string>())
-      topMaps.push(new Map<string, number>())
-    }
+    // 数值列也要统计唯一值和高频值：唯一值是质检指标，「出现最多的值」填充也要用它
+    distinctSets.push(new Set<string>())
+    topMaps.push(new Map<string, number>())
   }
 
   for (let r = 0; r < n; r++) {
@@ -531,7 +547,14 @@ export function profileRows(
           const acc0 = accs[c]
           if (acc0.sample.length < 3) acc0.sample.push(formatCell(v, 'number'))
         } else {
-          if (typeof v !== 'number') row[c] = num
+          // 写时复制：只在真的要改这一格时才复制整行，baseline 不受影响
+          if (typeof v !== 'number') ownRow(r)[c] = num
+          const key = String(num)
+          const set = distinctSets[c]!
+          if (set.size < DISTINCT_CAP) set.add(key)
+          else distinctApprox[c] = true
+          const map = topMaps[c]!
+          if (map.size < TOP_CAP || map.has(key)) map.set(key, (map.get(key) ?? 0) + 1)
           const acc0 = accs[c]
           if (acc0.sample.length < 3) acc0.sample.push(formatCell(num, 'number'))
         }
@@ -600,7 +623,7 @@ export function profileRows(
       acc,
       type: types[c],
       missing,
-      distinct: set ? set.size : nonBlank,
+      distinct: set ? set.size : 0,
       outliers: numeric?.outliers ?? 0,
       invalid: invalidCounts[c],
       nonBlank,
@@ -614,7 +637,7 @@ export function profileRows(
       outlierRate: numeric && numeric.n > 0 ? numeric.outliers / numeric.n : 0,
       invalidRate: nonBlank > 0 ? invalidCounts[c] / nonBlank : 0,
       whitespace: acc.whitespace,
-      distinct: set ? set.size : nonBlank,
+      distinct: set ? set.size : 0,
       nonBlank,
     })
 
@@ -626,7 +649,7 @@ export function profileRows(
       type: types[c],
       missing,
       missingRate: total > 0 ? missing / total : 0,
-      distinct: set ? set.size : nonBlank,
+      distinct: set ? set.size : 0,
       distinctApprox: distinctApprox[c],
       sample: acc.sample,
       issues,

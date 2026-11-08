@@ -65,8 +65,17 @@ export function resolveFillValue(col: Column, strategy: FillStrategy, custom?: s
       return col.numeric && Number.isFinite(col.numeric.median) ? col.numeric.median : null
     case 'zero':
       return 0
-    case 'mode':
-      return col.top.length > 0 ? col.top[0].value : null
+    case 'mode': {
+      if (col.top.length === 0) return null
+      const top = col.top[0].value
+      // 数值列的 top 以字符串形式保存，回填时必须还原成数字，
+      // 否则填进去的是文本，重算后这列的均值/中位数还是缺的
+      if (col.type === 'number') {
+        const n = Number(top)
+        return Number.isFinite(n) ? n : null
+      }
+      return top
+    }
     case 'text':
       return custom && custom.length > 0 ? custom : '未填写'
   }

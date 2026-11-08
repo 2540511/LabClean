@@ -54,6 +54,8 @@ export interface ColumnAnalysis {
   points: number[]
   outlierRows: Set<number>
   outlierCount: number
+  /** 真实的离群值（最多 500 个，给箱线图打点用；不是抽样点） */
+  outlierValues: number[]
   mean: number
   median: number
   /** 分箱所用区间的上下界（异常值被排除在这之外） */
@@ -63,6 +65,7 @@ export interface ColumnAnalysis {
 
 const MAX_POINTS = 600
 const MAX_OUTLIER_ROWS = 50_000
+const MAX_OUTLIER_VALUES = 500
 
 function reservoirPush(arr: number[], value: number, seen: number): void {
   if (arr.length < MAX_POINTS) {
@@ -108,6 +111,7 @@ export function analyzeColumn(
   }
 
   const outlierRows = new Set<number>()
+  const outlierValues: number[] = []
   const points: number[] = []
   let seen = 0
   let lowCount = 0
@@ -126,10 +130,12 @@ export function analyzeColumn(
       lowCount++
       outlierCount++
       if (outlierRows.size < MAX_OUTLIER_ROWS) outlierRows.add(r)
+      if (outlierValues.length < MAX_OUTLIER_VALUES) outlierValues.push(v)
     } else if (!col.summary && v > hi) {
       highCount++
       outlierCount++
       if (outlierRows.size < MAX_OUTLIER_ROWS) outlierRows.add(r)
+      if (outlierValues.length < MAX_OUTLIER_VALUES) outlierValues.push(v)
     } else {
       const k = span > 0 ? Math.min(binCount - 1, Math.floor(((v - lo) / span) * binCount)) : 0
       bins[k].count++
@@ -146,6 +152,7 @@ export function analyzeColumn(
     points,
     outlierRows,
     outlierCount,
+    outlierValues,
     mean: stats.mean,
     median: stats.median,
     lowFence: lo,
