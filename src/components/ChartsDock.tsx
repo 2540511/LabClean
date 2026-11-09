@@ -4,7 +4,7 @@ import type { EChartsOption } from 'echarts'
 import type { Dataset } from '../core/types'
 import type { ColumnAnalysis } from '../lib/analyze'
 import { formatNumber } from '../core/value'
-import { pct, shortNum } from '../lib/format'
+import { escapeHtml, pct, shortNum } from '../lib/format'
 import { Chart } from './Chart'
 
 const AXIS = {
@@ -226,7 +226,9 @@ export function ChartsDock({ dataset, selected, analysis }: Props) {
         axisPointer: { type: 'shadow' },
         formatter: (p: unknown) => {
           const arr = p as { name: string; value: number }[]
-          return arr.length > 0 ? `${arr[0].name}<br/>缺失率 ${pct(arr[0].value, 2)}` : ''
+          return arr.length > 0
+            ? `${escapeHtml(arr[0].name)}<br/>缺失率 ${pct(arr[0].value, 2)}`
+            : ''
         },
       },
       xAxis: { type: 'value', ...AXIS, axisLabel: { ...AXIS.axisLabel, formatter: (v: number) => `${(v * 100).toFixed(0)}%` }, max: 1 },

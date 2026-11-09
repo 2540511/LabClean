@@ -454,7 +454,7 @@ export function profileRows(
   // 统计汇总表整张都是算出来的数，不做异常值判定
   const noOutlierCheck = summarySheet
 
-  // ---- 第一遍：类型识别 + 数值采样 + 重复行哈希 ----
+  // ---- 第一遍：类型识别 + 重复行哈希 ----
   const checkDup = n <= DUP_SCAN_LIMIT
   const seenRows = checkDup ? new Set<string>() : null
   let duplicateRows = 0
@@ -472,18 +472,9 @@ export function profileRows(
           acc.blank++
           missingCells++
           break
-        case 'number': {
+        case 'number':
           acc.number++
-          const num = Number(v)
-          // 汇总行（合计/平均/总计…）不进蓄水池，也不参与 min/max，
-          // 否则一个「合计 2400」会把中位数/MAD 的判据整体带偏
-          if (!summaryRowIdx.has(r)) {
-            pushReservoir(acc, num)
-            if (num < acc.min) acc.min = num
-            if (num > acc.max) acc.max = num
-          }
           break
-        }
         case 'leadingZero':
           acc.leadingZero++
           break
@@ -556,6 +547,11 @@ export function profileRows(
           const map = topMaps[c]!
           if (map.size < TOP_CAP || map.has(key)) map.set(key, (map.get(key) ?? 0) + 1)
           const acc0 = accs[c]
+          if (!summaryRowIdx.has(r)) {
+            pushReservoir(acc0, num)
+            if (num < acc0.min) acc0.min = num
+            if (num > acc0.max) acc0.max = num
+          }
           if (acc0.sample.length < 3) acc0.sample.push(formatCell(num, 'number'))
         }
         continue

@@ -20,6 +20,7 @@ interface Props {
   onUndo: () => void
   onRedo: () => void
   onOpenTemplates: () => void
+  onOpenAi: () => void
 }
 
 /** 前后对比的一行：数值 + 变化量 */
@@ -77,6 +78,7 @@ export function AuxPanel({
   onUndo,
   onRedo,
   onOpenTemplates,
+  onOpenAi,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [cmpOpen, setCmpOpen] = useState(false)
@@ -122,8 +124,14 @@ export function AuxPanel({
       </summary>
 
       <div className="panel-body">
+        <div className="ops-sub-title">AI 数据诊断 · 只读意见</div>
+        <button className="btn btn-ghost block-btn" onClick={onOpenAi} disabled={busy}>
+          AI 诊断…
+        </button>
+        <div className="hint">只发送表结构与统计摘要，不发送数据行，不修改数据或清洗历史</div>
+
         {/* ① 清洗模板 */}
-        <div className="ops-sub-title">清洗模板 · 一套规则重复用</div>
+        <div className="ops-sub-title aux-gap">清洗模板 · 一套规则重复用</div>
         <div className="actions">
           <button
             className="btn btn-ghost"

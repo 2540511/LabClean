@@ -37,10 +37,16 @@ export interface SourceMetrics {
 const datasetCache = new Map<string, Dataset>()
 
 function fingerprint(source: DataSource): string {
-  return `${source.id}|${source.steps
+  return `${source.id}|${source.baseline.id}|${source.steps
     .slice(0, source.cursor)
     .map((s) => s.id)
     .join(',')}`
+}
+
+export function releaseSourceCache(sourceId: string): void {
+  for (const key of datasetCache.keys()) {
+    if (key.startsWith(`${sourceId}|`)) datasetCache.delete(key)
+  }
 }
 
 export function resolveCurrent(source: DataSource): Dataset {
@@ -49,17 +55,15 @@ export function resolveCurrent(source: DataSource): Dataset {
   if (hit) return hit
 
   const applied = source.steps.slice(0, source.cursor)
-  const ds =
-    applied.length === 0
-      ? source.baseline
-      : rebuildDataset(
-          source.baseline,
-          replay(
-            source.baseline.rows,
-            source.baseline.columns,
-            applied.map((s) => s.spec),
-          ).rows,
-        )
+  let ds = source.baseline
+  if (applied.length > 0) {
+    const out = replay(
+      source.baseline.rows,
+      source.baseline.columns,
+      applied.map((s) => s.spec),
+    )
+    ds = rebuildDataset(source.baseline, out.rows, { headers: out.headers })
+  }
   datasetCache.set(key, ds)
   if (datasetCache.size > 120) datasetCache.clear()
   return ds

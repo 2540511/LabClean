@@ -4,7 +4,7 @@ import type { Dataset } from '../core/types'
 import { KIND_LABEL, classifyFields, recommendCharts, type ChartPlan } from '../core/recommend'
 import { analyzeColumn, type ColumnAnalysis } from '../lib/analyze'
 import { scatterSeries, timeSeries } from '../lib/series'
-import { shortNum } from '../lib/format'
+import { escapeHtml, shortNum } from '../lib/format'
 import { Chart } from './Chart'
 
 const AXIS = {
@@ -171,7 +171,7 @@ function buildBar(dataset: Dataset, plan: ChartPlan): Built {
           const arr = p as { name: string; value: number }[]
           if (!arr.length) return ''
           const share = total > 0 ? ((arr[0].value / total) * 100).toFixed(1) : '0'
-          return `${arr[0].name}<br/><b>${arr[0].value}</b> 个 · 占 ${share}%`
+          return `${escapeHtml(arr[0].name)}<br/><b>${arr[0].value}</b> 个 · 占 ${share}%`
         },
       },
       xAxis: { type: 'value', ...AXIS },
@@ -206,7 +206,7 @@ function buildLine(dataset: Dataset, plan: ChartPlan, summaryRows: Set<number>):
           const arr = p as { axisValueLabel?: string; value?: [number, number | null] }[]
           if (!arr.length) return ''
           const v = arr[0].value?.[1] ?? null
-          return `${arr[0].axisValueLabel ?? ''}<br/>${plan.secondName} 均值 <b>${v === null ? '—' : shortNum(v)}</b>`
+          return `${escapeHtml(arr[0].axisValueLabel ?? '')}<br/>${escapeHtml(plan.secondName ?? '')} 均值 <b>${v === null ? '—' : shortNum(v)}</b>`
         },
       },
       xAxis: {
@@ -283,7 +283,7 @@ function buildScatter(dataset: Dataset, plan: ChartPlan, summaryRows: Set<number
         formatter: (p: unknown) => {
           const item = p as { seriesType: string; value?: [number, number] }
           if (item.seriesType !== 'scatter' || !item.value) return ''
-          return `${plan.colName} ${shortNum(item.value[0])}<br/>${plan.secondName} ${shortNum(item.value[1])}`
+          return `${escapeHtml(plan.colName)} ${shortNum(item.value[0])}<br/>${escapeHtml(plan.secondName ?? '')} ${shortNum(item.value[1])}`
         },
       },
       xAxis: {

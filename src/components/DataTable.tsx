@@ -27,6 +27,7 @@ interface Props {
   focusRow: number | null
   /** 每次跳转递增，连点同一行也能重新滚动过去 */
   focusSeq: number
+  issueHighlight: { columnIndex: number; rows: Set<number> } | null
   /** 原始数据 + 行来源映射，用来标出被清洗改动过的单元格 */
   compare?: { rows: CellValue[][]; origins: number[] } | null
   /** 手动点选的行（0 基下标），用于逐行删除 */
@@ -44,6 +45,7 @@ export function DataTable({
   outlierSettings,
   focusRow,
   focusSeq,
+  issueHighlight,
   compare,
   selectedRows,
   onToggleRow,
@@ -203,6 +205,7 @@ export function DataTable({
                     'tr-body',
                     r % 2 === 1 && 'tr-alt',
                     isOutlierRow && 'tr-outlier',
+                    issueHighlight?.rows.has(r) && 'tr-issue',
                     selectedRows.has(r) && 'tr-picked',
                     focusRow === r && 'tr-focus',
                   )}
@@ -231,6 +234,9 @@ export function DataTable({
                           empty && 'td-empty',
                           isOutlierCell && 'td-outlier',
                           changed && 'td-changed',
+                          issueHighlight?.columnIndex === c &&
+                            issueHighlight.rows.has(r) &&
+                            'td-issue',
                         )}
                         style={{ width: widths[c] }}
                         title={

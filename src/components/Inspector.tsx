@@ -3,6 +3,7 @@ import type { Column, Dataset } from '../core/types'
 import { FILTER_LABEL, resolveFillValue, type FillStrategy, type FilterOp } from '../core/clean'
 import type { OpSpec, StepRecord } from '../core/pipeline'
 import type { DatasetDiff } from '../lib/diff'
+import type { IssueRowKind, IssueRowSelection } from '../lib/analyze'
 import { cx, int, num, pct } from '../lib/format'
 import { AuxPanel } from './AuxPanel'
 
@@ -32,6 +33,11 @@ interface Props {
   onRedo: () => void
   onOpenTemplates: () => void
   onOpenFuzzy: () => void
+  onOpenAi: () => void
+  activeIssue: IssueRowSelection | null
+  issueRows: number[]
+  onToggleIssue: (kind: IssueRowKind) => void
+  onJumpRow: (row: number) => void
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'warn' | 'bad' | 'good' }) {
@@ -59,6 +65,11 @@ export function Inspector({
   onRedo,
   onOpenTemplates,
   onOpenFuzzy,
+  onOpenAi,
+  activeIssue,
+  issueRows,
+  onToggleIssue,
+  onJumpRow,
 }: Props) {
   const [strategy, setStrategy] = useState<FillStrategy>('median')
   const [filterOp, setFilterOp] = useState<FilterOp>('gt')
@@ -164,12 +175,69 @@ export function Inspector({
 
           {column.issues.length > 0 ? (
             <div className="issue-list">
-              {column.issues.map((issue, i) => (
-                <div key={i} className={cx('issue', `issue-${issue.severity}`)}>
-                  <span className="issue-tag">{SEVERITY_LABEL[issue.severity]}</span>
-                  <span>{issue.message}</span>
-                </div>
-              ))}
+              {column.issues.map((issue, i) => {
+                const kind: IssueRowKind | null =
+                  issue.code === 'MISSING'
+                    ? 'missing'
+                    : issue.code === 'OUTLIER'
+                      ? 'outlier'
+                      : null
+                const expanded =
+                  kind !== null &&
+                  activeIssue?.columnIndex === column.index &&
+                  activeIssue.kind === kind
+                return (
+                  <div key={i}>
+                    {kind ? (
+                      <button
+                        type="button"
+                        className={cx(
+                          'issue',
+                          'issue-button',
+                          `issue-${issue.severity}`,
+                          expanded && 'is-open',
+                        )}
+                        onClick={() => onToggleIssue(kind)}
+                        aria-expanded={expanded}
+                      >
+                        <span className="issue-tag">{SEVERITY_LABEL[issue.severity]}</span>
+                        <span className="issue-message">{issue.message}</span>
+                        <span className="issue-toggle">{expanded ? '收起' : '查看行'}</span>
+                      </button>
+                    ) : (
+                      <div className={cx('issue', `issue-${issue.severity}`)}>
+                        <span className="issue-tag">{SEVERITY_LABEL[issue.severity]}</span>
+                        <span>{issue.message}</span>
+                      </div>
+                    )}
+                    {expanded ? (
+                      <div className="issue-rows">
+                        <div className="issue-rows-head">
+                          定位到 {int(issueRows.length)} 行，表格中已标黄；点击行号跳转
+                        </div>
+                        <div className="issue-row-grid">
+                          {issueRows.slice(0, 100).map((row) => (
+                            <button
+                              key={row}
+                              type="button"
+                              className="issue-row-link"
+                              onClick={() => onJumpRow(row)}
+                              title={`跳到第 ${row + 1} 行`}
+                            >
+                              第 {int(row + 1)} 行
+                            </button>
+                          ))}
+                        </div>
+                        {issueRows.length > 100 ? (
+                          <div className="issue-rows-more">
+                            仅列出前 100 行，其余 {int(issueRows.length - 100)} 行也已标黄
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
             </div>
           ) : (
             <div className="issue-empty">这一列没有发现问题</div>
@@ -353,6 +421,7 @@ export function Inspector({
         onUndo={onUndo}
         onRedo={onRedo}
         onOpenTemplates={onOpenTemplates}
+        onOpenAi={onOpenAi}
       />
 
       <section className="panel panel-grow">

@@ -8,6 +8,7 @@ import { parseCsv } from '../src/core/csv'
 import { buildDataset, findHeaderRow, rebuildDataset } from '../src/core/profile'
 import { classify, coerceNumber, formatCell } from '../src/core/value'
 import { countFormulaOnly, readWorkbook } from '../src/core/xlsx-io'
+import type { CellValue } from '../src/core/types'
 import { handleRequest } from '../src/workers/table.worker'
 import * as XLSX from 'xlsx'
 import {
@@ -22,12 +23,14 @@ import { computeDiff } from '../src/lib/diff'
 import { buildCheckReport } from '../src/lib/checkReport'
 import {
   DEFAULT_OUTLIER_SETTINGS,
+  findColumnIssueRows,
   isOutlierValue,
   normalRange,
   resolveBinCount,
 } from '../src/lib/analyze'
 import { buildCompareSheets, buildReportSheets } from '../src/core/report'
-import { sourceMetrics, type DataSource } from '../src/core/compare'
+import { resolveCurrent, sourceMetrics, type DataSource } from '../src/core/compare'
+import { escapeHtml } from '../src/lib/format'
 import {
   DEFAULT_FUZZY,
   findFuzzyGroups,
@@ -45,6 +48,14 @@ import {
 } from '../src/core/template'
 import { classifyField, classifyFields, recommendCharts } from '../src/core/recommend'
 import { scatterSeries, timeSeries } from '../src/lib/series'
+import {
+  buildDiagnosisContext,
+  buildDiagnosisMessages,
+  normalizeChatEndpoint,
+  parseAiResponse,
+  parseDiagnosisContent,
+} from '../src/core/ai/diagnosis'
+import { DEFAULT_AI_SETTINGS, loadAiSettings, persistAiSettings } from '../src/core/ai/settings'
 
 let passed = 0
 const failures: string[] = []
@@ -93,6 +104,7 @@ console.log('\n[2] 值识别')
   eq('千分位转数字', coerceNumber('1,234.5'), 1234.5)
   eq('普通空格转数字', coerceNumber(' 25.3 '), 25.3)
   eq('非数字返回 null', coerceNumber('abc'), null)
+  eq('图表动态文本进行 HTML 转义', escapeHtml('<b>"x"&\''), '&lt;b&gt;&quot;x&quot;&amp;&#39;')
 }
 
 console.log('\n[3] 体检 + 异常值 + 重复行')
@@ -264,7 +276,17 @@ console.log('\n[9] Worker 解析链路（真实 xlsx 文件，5002 行）')
   // 切换到第二个工作表，验证缓存与切换逻辑
   const res2 = handleRequest({ id: 100, type: 'sheet', fileId: 'probe', fileName: '实验数据示例.xlsx', sheetIndex: 1 })
   check('切换工作表成功', res2.ok === true)
-  if (res2.ok) eq('第二个表 6 行', res2.dataset.meta.rowCount, 6)
+  if (res2.ok && 'dataset' in res2) eq('第二个表 6 行', res2.dataset.meta.rowCount, 6)
+
+  const released = handleRequest({ id: 101, type: 'release', fileId: 'probe' })
+  check('删除最后一个数据源时释放文件缓存', released.ok && 'released' in released && released.released)
+  let cacheMiss = false
+  try {
+    handleRequest({ id: 102, type: 'sheet', fileId: 'probe', fileName: '实验数据示例.xlsx', sheetIndex: 1 })
+  } catch {
+    cacheMiss = true
+  }
+  check('释放后不能再读取旧文件缓存', cacheMiss)
 }
 
 console.log('\n[10] 撤销 / 重做（从原始数据重放）')
@@ -346,6 +368,27 @@ console.log('\n[11] 多数据源对比')
   eq('清洗步数被记录', mc.steps, 1)
   check('原始数据源指标不受影响', sourceMetrics(sa).missingRate > 0)
 
+  const structuralSpecs: OpSpec[] = [
+    { kind: 'dropColumn', colIndex: 0, colName: 'x' },
+    { kind: 'renameColumn', colIndex: 0, from: 'y', to: 'y(值)' },
+  ]
+  const structural: DataSource = {
+    ...sb,
+    id: 'b-structural',
+    steps: buildStepSequence(sb.baseline.rows, sb.baseline.columns, structuralSpecs).steps,
+    cursor: 2,
+  }
+  const structuralCurrent = resolveCurrent(structural)
+  eq('对比视图使用删列和重命名后的表头', structuralCurrent.columns.map((c) => c.name), ['y(值)'])
+  eq('对比视图保留结构操作后的数据', structuralCurrent.rows, [[2], [4]])
+  eq('对比指标列数跟随当前结构', sourceMetrics(structural).cols, 1)
+
+  const refreshed = {
+    ...structural,
+    baseline: buildDataset('b.csv', '数据', parseCsv('x,y\n8,10\n9,12\n')),
+  }
+  eq('重新读取后不使用旧基线缓存', resolveCurrent(refreshed).rows, [[10], [12]])
+
   // 多数据源报告要带上每个源的清洗日志
   const cmp = buildCompareSheets([
     {
@@ -386,7 +429,7 @@ console.log('\n[12] 清洗模板（按列名套用到别的表）')
     { kind: 'trim' },
     { kind: 'fillMissing', colIndex: 1, colName: '城市', strategy: 'text', value: '未填写' },
   ]
-  const tplSteps = toTemplateSteps(specs, src.columns)
+  const tplSteps = toTemplateSteps(specs)
   eq('模板按列名记录而不是下标', tplSteps[1], {
     kind: 'fillMissing',
     colName: '城市',
@@ -394,6 +437,17 @@ console.log('\n[12] 清洗模板（按列名套用到别的表）')
     custom: '未填写',
   })
   eq('步骤可读标签', templateStepLabel(tplSteps[1]), '填充缺失（城市 · 填「未填写」）')
+
+  const renamedTpl = toTemplateSteps([
+    { kind: 'renameColumn', colIndex: 1, from: '城市', to: '地区' },
+    { kind: 'fillMissing', colIndex: 1, colName: '地区', strategy: 'text', value: '未知' },
+  ])
+  eq('重命名后的模板使用执行时列名', renamedTpl[1], {
+    kind: 'fillMissing',
+    colName: '地区',
+    strategy: 'text',
+    custom: '未知',
+  })
 
   const dst = buildDataset('b.csv', '数据', parseCsv('姓名,城市\n王五,\n赵六, 广州 \n'))
   const mat = materializeSteps(tplSteps, dst.columns)
@@ -627,7 +681,7 @@ console.log('\n[16] 手动删除行（可撤销）')
     { kind: 'filterRows', colIndex: 0, colName: 'a', op: 'gt', value: '2' },
   ])
   eq('删行后再筛选', chained.rows.map((r) => r[0]), [3, 4])
-  eq('删行不进模板（依赖具体行号）', toTemplateSteps([{ kind: 'dropRows', indices: [0] }], base.columns), [])
+  eq('删行不进模板（依赖具体行号）', toTemplateSteps([{ kind: 'dropRows', indices: [0] }]), [])
 }
 
 console.log('\n[17] 直方图分箱设置')
@@ -807,7 +861,12 @@ console.log('\n[21] 体检口径回归（baseline 写时复制 / 类型阈值 / 
   const noisy2: string[][] = [['读数']]
   for (let i = 0; i < 500; i++) noisy2.push([String(10 + i)])
   noisy2.push(['1,234'])
-  eq('单个千分位不改变数值判定', buildDataset('n2.csv', '数据', noisy2).columns[0].type, 'number')
+  const thousandsDs = buildDataset('n2.csv', '数据', noisy2)
+  eq('单个千分位不改变数值判定', thousandsDs.columns[0].type, 'number')
+  eq('千分位数值进入样本量统计', thousandsDs.columns[0].numeric?.n, 501)
+  eq('千分位数值进入极值统计', thousandsDs.columns[0].numeric?.max, 1234)
+  eq('千分位数值进入异常值统计', thousandsDs.columns[0].numeric?.outliers, 1)
+  eq('千分位文本在数据行中完成数值转换', thousandsDs.rows[500][0], 1234)
 
   const ids = buildDataset('n3.csv', '数据', [['编号'], ['001'], ['002'], ['003']])
   eq('编号列仍按文本保留', ids.columns[0].type, 'text')
@@ -858,6 +917,153 @@ console.log('\n[21] 体检口径回归（baseline 写时复制 / 类型阈值 / 
     '学号不推荐直方图',
     recommendCharts(idDs).every((p) => !(p.kind === 'histogram' && p.colName === '学号')),
   )
+}
+
+console.log('\n[22] AI 数据诊断（画像脱敏 / 纯函数解析 / 默认关闭）')
+{
+  const aiDs = buildDataset('secret.csv', '实验', [
+    ['样品编号', '温度', '备注'],
+    ['ROW_SECRET_ALPHA', '10', 'CELL_SECRET_ONE'],
+    ['ROW_SECRET_BETA', '', 'CELL_SECRET_TWO'],
+    ['ROW_SECRET_GAMMA', '999', 'CELL_SECRET_THREE'],
+  ])
+  const rowsBefore = JSON.stringify(aiDs.rows)
+  const context = buildDiagnosisContext(aiDs)
+  const profile = JSON.parse(context) as {
+    table: { rowCount: number; columnCount: number }
+    columns: {
+      name: string
+      numeric: { max: number } | null
+      issues: { code: string }[]
+      sample?: string[]
+      top?: unknown[]
+    }[]
+    rows?: unknown[]
+  }
+
+  eq('AI 画像保留行数统计', profile.table.rowCount, 3)
+  eq('AI 画像保留列数统计', profile.table.columnCount, 3)
+  eq('AI 画像包含全部表头', profile.columns.map((c) => c.name), ['样品编号', '温度', '备注'])
+  check('AI 画像不包含任何数据行文本', !context.includes('ROW_SECRET') && !context.includes('CELL_SECRET'))
+  check('AI 画像没有 rows 字段', !Object.prototype.hasOwnProperty.call(profile, 'rows'))
+  check(
+    'AI 画像排除样本值和高频值',
+    profile.columns.every((c) => c.sample === undefined && c.top === undefined),
+  )
+  eq('AI 画像保留数值摘要', profile.columns[1].numeric?.max, 999)
+  check('AI 画像保留质量问题', profile.columns[1].issues.some((issue) => issue.code === 'MISSING'))
+  eq('同一画像重复拼装结果一致', buildDiagnosisContext(aiDs), context)
+
+  const messages = buildDiagnosisMessages(aiDs, 'SYSTEM_PROMPT_SENTINEL')
+  eq('请求只包含系统和用户两条消息', messages.length, 2)
+  eq('系统提示词由调用方原样注入', messages[0].content, 'SYSTEM_PROMPT_SENTINEL')
+  check('用户消息声明没有数据行', messages[1].content.includes('没有数据行'))
+  check('消息全文也不包含秘密数据值', !messages.some((m) => m.content.includes('SECRET')))
+  eq('构造诊断上下文不修改数据行', JSON.stringify(aiDs.rows), rowsBefore)
+  eq(
+    'API 根地址自动补全诊断路径',
+    normalizeChatEndpoint('https://api.openai.com'),
+    'https://api.openai.com/v1/chat/completions',
+  )
+  eq(
+    'v1 地址自动补全诊断路径',
+    normalizeChatEndpoint('https://example.com/v1'),
+    'https://example.com/v1/chat/completions',
+  )
+  eq(
+    '带版本号的兼容接口自动补全',
+    normalizeChatEndpoint('https://example.com/api/paas/v4/'),
+    'https://example.com/api/paas/v4/chat/completions',
+  )
+  eq(
+    '完整接口地址不重复补全',
+    normalizeChatEndpoint('https://example.com/v1/chat/completions'),
+    'https://example.com/v1/chat/completions',
+  )
+  eq(
+    '接口查询参数保留而片段被移除',
+    normalizeChatEndpoint('https://example.com/v1?api-version=1#fragment'),
+    'https://example.com/v1/chat/completions?api-version=1',
+  )
+
+  const valid = {
+    issues: [
+      {
+        title: '温度存在缺失',
+        severity: 'high',
+        evidence: '温度列有 1 个空单元格',
+        suggestion: '人工复核缺失原因后再决定是否填充',
+      },
+    ],
+    report: '本次实验数据包含 3 行记录，温度列存在缺失，建议复核后处理。',
+  }
+  eq('解析标准 JSON 诊断', parseDiagnosisContent(JSON.stringify(valid)), valid)
+  eq('解析代码块包裹的 JSON 诊断', parseDiagnosisContent(`\`\`\`json\n${JSON.stringify(valid)}\n\`\`\``), valid)
+  eq(
+    '解析 OpenAI 兼容接口响应',
+    parseAiResponse({ choices: [{ message: { content: JSON.stringify(valid) } }] }),
+    valid,
+  )
+  eq(
+    '没有质量问题时允许空建议列表',
+    parseDiagnosisContent('{"issues":[],"report":"现有统计未发现明确问题。"}').issues,
+    [],
+  )
+
+  const rejects = (fn: () => void): boolean => {
+    try {
+      fn()
+      return false
+    } catch {
+      return true
+    }
+  }
+  check('拒绝无效 JSON', rejects(() => parseDiagnosisContent('not-json')))
+  check('拒绝非 HTTP 接口地址', rejects(() => normalizeChatEndpoint('file:///tmp/api')))
+  check(
+    '拒绝无效严重程度',
+    rejects(() =>
+      parseDiagnosisContent(
+        JSON.stringify({ ...valid, issues: [{ ...valid.issues[0], severity: 'urgent' }] }),
+      ),
+    ),
+  )
+  check('拒绝缺少报告文字', rejects(() => parseDiagnosisContent('{"issues":[]}')))
+  check('拒绝缺少模型内容', rejects(() => parseAiResponse({ choices: [] })))
+
+  eq('AI 默认配置关闭', DEFAULT_AI_SETTINGS.enabled, false)
+  eq('无存储环境读取仍为关闭', loadAiSettings().enabled, false)
+  try {
+    persistAiSettings({ ...DEFAULT_AI_SETTINGS, apiKey: 'DO_NOT_WRITE_TO_CODE' })
+    check('无存储环境保存配置不抛错', true)
+  } catch {
+    check('无存储环境保存配置不抛错', false)
+  }
+
+  const prompt = readFileSync(join(process.cwd(), 'src/core/ai/system-prompt.txt'), 'utf8')
+  check('系统提示词要求只读且禁止执行清洗', prompt.includes('不生成或执行清洗操作'))
+  check('系统提示词要求严格 JSON 返回', prompt.includes('只返回一个合法 JSON 对象'))
+}
+
+console.log('\n[23] 问题行定位（缺失 / 异常 / 合计行）')
+{
+  eq('缺失警告定位到空单元格所在行', findColumnIssueRows(ds, 1, 'missing'), [3])
+  const blanks = buildDataset('blanks.csv', '数据', parseCsv('x,y\n1,   \n,ok\n2,3\n'))
+  eq('纯空白字符串也算缺失', findColumnIssueRows(blanks, 1, 'missing'), [0])
+  eq('不同列分别定位缺失行', findColumnIssueRows(blanks, 0, 'missing'), [1])
+
+  const body = ['x']
+  for (let i = 0; i < 99; i++) body.push(String(10 + (i % 7) * 0.1))
+  body.push('99999')
+  const extreme = buildDataset('问题行.csv', '数据', parseCsv(body.join('\n')))
+  eq('异常警告定位到极端值所在行', findColumnIssueRows(extreme, 0, 'outlier'), [99])
+  extreme.meta.summaryRowIndexes = [99]
+  eq('异常定位排除合计行', findColumnIssueRows(extreme, 0, 'outlier'), [])
+  eq('无效列返回空问题行列表', findColumnIssueRows(extreme, 99, 'missing'), [])
+
+  const rowsBefore = JSON.stringify(ds.rows)
+  findColumnIssueRows(ds, 1, 'missing')
+  eq('问题行查找不修改数据', JSON.stringify(ds.rows), rowsBefore)
 }
 
 console.log(`\n结果：通过 ${passed} 项，失败 ${failures.length} 项`)

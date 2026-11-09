@@ -27,6 +27,7 @@ const fileCache = new Map<string, Uint8Array>()
 type Request =
   | { id: number; type: 'parse'; fileId: string; fileName: string; buffer: ArrayBuffer }
   | { id: number; type: 'sheet'; fileId: string; fileName: string; sheetIndex: number }
+  | { id: number; type: 'release'; fileId: string }
 
 type Response =
   | {
@@ -37,6 +38,7 @@ type Response =
       encoding?: string
       delimiter?: string
     }
+  | { id: number; ok: true; released: boolean }
   | { id: number; ok: false; error: string }
 
 const TEXT_EXT = /\.(csv|tsv|txt)$/i
@@ -124,7 +126,14 @@ function handleSheet(req: Extract<Request, { type: 'sheet' }>): Response {
 
 /** 真正的请求分发（导出是为了能在 Node 里跑冒烟测试） */
 export function handleRequest(req: Request): Response {
-  return req.type === 'parse' ? handleParse(req) : handleSheet(req)
+  switch (req.type) {
+    case 'parse':
+      return handleParse(req)
+    case 'sheet':
+      return handleSheet(req)
+    case 'release':
+      return { id: req.id, ok: true, released: fileCache.delete(req.fileId) }
+  }
 }
 
 const hasWorkerScope = typeof self !== 'undefined'

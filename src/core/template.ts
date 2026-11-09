@@ -68,8 +68,8 @@ export function findColumnByName(columns: Column[], name: string): Column | null
   return loose ?? null
 }
 
-/** 把已执行的步骤转成模板（列下标 → 列名） */
-export function toTemplateSteps(specs: OpSpec[], columns: Column[]): TemplateStep[] {
+/** 把已执行的步骤转成模板；步骤里的列名对应执行时的布局 */
+export function toTemplateSteps(specs: OpSpec[]): TemplateStep[] {
   const out: TemplateStep[] = []
   for (const spec of specs) {
     switch (spec.kind) {
@@ -79,12 +79,12 @@ export function toTemplateSteps(specs: OpSpec[], columns: Column[]): TemplateSte
         out.push({ kind: spec.kind })
         break
       case 'normalizeNumbers':
-        out.push({ kind: 'normalizeNumbers', colName: columns[spec.colIndex]?.name ?? spec.colName })
+        out.push({ kind: 'normalizeNumbers', colName: spec.colName })
         break
       case 'fillMissing':
         out.push({
           kind: 'fillMissing',
-          colName: columns[spec.colIndex]?.name ?? spec.colName,
+          colName: spec.colName,
           strategy: spec.strategy,
           custom: spec.strategy === 'text' && typeof spec.value === 'string' ? spec.value : undefined,
         })
@@ -98,13 +98,13 @@ export function toTemplateSteps(specs: OpSpec[], columns: Column[]): TemplateSte
       case 'filterRows':
         out.push({
           kind: 'filterRows',
-          colName: columns[spec.colIndex]?.name ?? spec.colName,
+          colName: spec.colName,
           op: spec.op,
           value: spec.value,
         })
         break
       case 'dropColumn':
-        out.push({ kind: 'dropColumn', colName: columns[spec.colIndex]?.name ?? spec.colName })
+        out.push({ kind: 'dropColumn', colName: spec.colName })
         break
       case 'moveColumn':
         out.push({ kind: 'moveColumn', colName: spec.colName, to: spec.to })

@@ -82,8 +82,13 @@ export class TableClient {
     return this.request({ type: 'sheet', fileId, fileName, sheetIndex })
   }
 
+  release(fileId: string): void {
+    this.worker.postMessage({ id: ++this.seq, type: 'release', fileId })
+  }
+
   dispose(): void {
     this.worker.terminate()
+    for (const [, resolver] of this.pending) resolver.reject(new Error('解析客户端已关闭'))
     this.pending.clear()
   }
 }

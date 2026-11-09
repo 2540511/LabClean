@@ -1,4 +1,5 @@
-import type { CellValue, Column } from '../core/types'
+import type { CellValue, Column, Dataset } from '../core/types'
+import { isBlank } from '../core/value'
 
 export type BinKind = 'normal' | 'low' | 'high'
 
@@ -224,4 +225,32 @@ export function isOutlierValue(
   if (!fences) return false
   const [low, high] = fences
   return v < low || v > high
+}
+
+export type IssueRowKind = 'missing' | 'outlier'
+
+export interface IssueRowSelection {
+  columnIndex: number
+  kind: IssueRowKind
+}
+
+export function findColumnIssueRows(
+  dataset: Dataset,
+  columnIndex: number,
+  kind: IssueRowKind,
+  settings: OutlierSettings = DEFAULT_OUTLIER_SETTINGS,
+): number[] {
+  const col = dataset.columns[columnIndex]
+  if (!col) return []
+  const summaryRows = new Set<number>(dataset.meta.summaryRowIndexes ?? [])
+  const rows: number[] = []
+  for (let r = 0; r < dataset.rows.length; r++) {
+    const value = dataset.rows[r][columnIndex] ?? null
+    const matched =
+      kind === 'missing'
+        ? isBlank(value)
+        : isOutlierValue(value, col, settings, summaryRows.has(r))
+    if (matched) rows.push(r)
+  }
+  return rows
 }

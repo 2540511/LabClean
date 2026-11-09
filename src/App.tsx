@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AiDiagnosisDialog } from './components/AiDiagnosisDialog'
 import { ChartsDock } from './components/ChartsDock'
 import { CompareView } from './components/CompareView'
 import { DataTable } from './components/DataTable'
@@ -10,7 +11,7 @@ import { Rail } from './components/Rail'
 import { SettingsDialog } from './components/SettingsDialog'
 import { TemplateDialog, type ApplyScope } from './components/TemplateDialog'
 import { resolveFillValue } from './core/clean'
-import { resolveCurrent, sourceMetrics, type DataSource } from './core/compare'
+import { releaseSourceCache, resolveCurrent, sourceMetrics, type DataSource } from './core/compare'
 import { buildDemoDatasets } from './core/demo'
 import {
   applySpec,
@@ -37,11 +38,12 @@ import { analyzeColumn } from './lib/analyze'
 import {
   DEFAULT_HIST,
   DEFAULT_OUTLIER_SETTINGS,
+  findColumnIssueRows,
   isOutlierValue,
   normalRange,
   resolveBinCount,
 } from './lib/analyze'
-import type { HistSetting, OutlierMode, OutlierSettings } from './lib/analyze'
+import type { HistSetting, IssueRowKind, IssueRowSelection, OutlierMode, OutlierSettings } from './lib/analyze'
 import { computeDiff } from './lib/diff'
 import { bytes, nowStamp } from './lib/format'
 import { TableClient } from './lib/tableClient'
@@ -111,6 +113,7 @@ export default function App() {
   const [focusRow, setFocusRow] = useState<number | null>(null)
   /** 每次跳转加一：连点同一行也能重新滚过去 */
   const [focusSeq, setFocusSeq] = useState(0)
+  const [activeIssue, setActiveIssue] = useState<IssueRowSelection | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   /** 最近一次导出的文件：浏览器拦截自动下载时，用户可以点这个链接自己另存 */
@@ -137,6 +140,7 @@ export default function App() {
   const [tplOpen, setTplOpen] = useState(false)
   const [fuzzyOpen, setFuzzyOpen] = useState(false)
   const [fuzzyAuto, setFuzzyAuto] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
 
   const clientRef = useRef<TableClient | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -145,6 +149,10 @@ export default function App() {
   const getClient = useCallback(() => {
     if (!clientRef.current) clientRef.current = new TableClient()
     return clientRef.current
+  }, [])
+
+  const releaseFile = useCallback((fileId: string) => {
+    if (!fileId.startsWith('demo')) clientRef.current?.release(fileId)
   }, [])
 
   useEffect(() => () => clientRef.current?.dispose(), [])
@@ -215,11 +223,14 @@ export default function App() {
       if (files.length === 0) return
       setError(null)
       const added: DataSource[] = []
+      const parsedFileIds = new Set<string>()
+      const retainedFileIds = new Set<string>()
       try {
         for (const f of files) {
           setBusy(`正在读取 ${f.name}…`)
           const buffer = await f.arrayBuffer()
           const fileId = `f_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`
+          parsedFileIds.add(fileId)
           const res = await getClient().parse(fileId, f.name, buffer, (phase) =>
             setBusy(`${f.name}：${phase}`),
           )
@@ -251,8 +262,8 @@ export default function App() {
         const key = (s: DataSource) => `${s.name}#${s.sheet}`
         const seen = new Set(sources.map(key))
         const fresh = added.filter((s) => !seen.has(key(s)))
+        for (const source of fresh) retainedFileIds.add(source.fileId)
         if (fresh.length === 0) {
-          setBusy(null)
           setError('这些数据源已经在列表里了')
           return
         }
@@ -262,10 +273,13 @@ export default function App() {
       } catch (e) {
         setError(describeError(e))
       } finally {
+        for (const fileId of parsedFileIds) {
+          if (!retainedFileIds.has(fileId)) releaseFile(fileId)
+        }
         setBusy(null)
       }
     },
-    [getClient, sources],
+    [getClient, releaseFile, sources],
   )
 
   const onDrop = useCallback(
@@ -331,12 +345,17 @@ export default function App() {
 
   const removeSource = useCallback(
     (id: string) => {
+      const removed = sources.find((s) => s.id === id)
       const next = sources.filter((s) => s.id !== id)
+      if (removed) {
+        releaseSourceCache(id)
+        if (!next.some((s) => s.fileId === removed.fileId)) releaseFile(removed.fileId)
+      }
       setSources(next)
       if (activeId === id) setActiveId(next[0]?.id ?? null)
       if (next.length === 0) setView('table')
     },
-    [activeId, sources],
+    [activeId, releaseFile, sources],
   )
 
   // ---------- 清洗 ----------
@@ -383,10 +402,7 @@ export default function App() {
         id: `tpl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`,
         name,
         createdAt: Date.now(),
-        steps: toTemplateSteps(
-          applied.map((s) => s.spec),
-          active.baseline.columns,
-        ),
+        steps: toTemplateSteps(applied.map((s) => s.spec)),
       }
       setTemplates((prev) => {
         const next = [tpl, ...prev]
@@ -480,7 +496,12 @@ export default function App() {
   useEffect(() => {
     setSelectedRows(new Set())
     setFocusRow(null)
+    setActiveIssue(null)
   }, [dataset])
+
+  useEffect(() => {
+    setActiveIssue(null)
+  }, [selected])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -616,6 +637,35 @@ export default function App() {
     }
     return out
   }, [dataset, selected, outlierSettings])
+
+  const issueRows = useMemo(() => {
+    if (!dataset || !activeIssue) return []
+    return findColumnIssueRows(
+      dataset,
+      activeIssue.columnIndex,
+      activeIssue.kind,
+      outlierSettings,
+    )
+  }, [dataset, activeIssue, outlierSettings])
+
+  const issueHighlight = useMemo(
+    () =>
+      activeIssue
+        ? { columnIndex: activeIssue.columnIndex, rows: new Set(issueRows) }
+        : null,
+    [activeIssue, issueRows],
+  )
+
+  const toggleIssue = useCallback(
+    (kind: IssueRowKind) => {
+      setActiveIssue((prev) =>
+        prev?.columnIndex === selected && prev.kind === kind
+          ? null
+          : { columnIndex: selected, kind },
+      )
+    },
+    [selected],
+  )
 
   /** 解析成「具体要标红的列下标集合」 */
   const redColumns = useMemo(() => {
@@ -763,6 +813,15 @@ export default function App() {
         <button className="btn" onClick={() => setSettingsOpen(true)} title="异常标红 / 直方图分箱">
           显示设置
         </button>
+        {dataset ? (
+          <button
+            className="btn"
+            onClick={() => setAiOpen(true)}
+            title="只发送表结构与统计摘要，不发送数据行"
+          >
+            AI 诊断
+          </button>
+        ) : null}
 
         {active && view === 'table' ? (
           <>
@@ -877,6 +936,7 @@ export default function App() {
               outlierSettings={outlierSettings}
               focusRow={focusRow}
               focusSeq={focusSeq}
+              issueHighlight={issueHighlight}
               compare={compareSource}
               selectedRows={selectedRows}
               onToggleRow={toggleRow}
@@ -903,6 +963,11 @@ export default function App() {
             onRedo={redo}
             onOpenTemplates={() => setTplOpen(true)}
             onOpenFuzzy={() => setFuzzyOpen(true)}
+            onOpenAi={() => setAiOpen(true)}
+            activeIssue={activeIssue}
+            issueRows={issueRows}
+            onToggleIssue={toggleIssue}
+            onJumpRow={jumpToRow}
           />
         </div>
       ) : (
@@ -991,6 +1056,8 @@ export default function App() {
         onApply={applyTemplate}
         onDelete={deleteTemplate}
       />
+
+      <AiDiagnosisDialog open={aiOpen} dataset={dataset} onClose={() => setAiOpen(false)} />
 
       {saved ? (
         <div className="save-bar" role="status">
