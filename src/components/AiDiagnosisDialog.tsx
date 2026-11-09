@@ -16,6 +16,17 @@ const SEVERITY_LABEL: Record<AiSeverity, string> = {
   low: '低',
 }
 
+const AI_ENDPOINT_PRESETS = [
+  { name: '小米 MiMo', endpoint: 'https://api.xiaomimimo.com/v1' },
+  { name: 'OpenAI', endpoint: 'https://api.openai.com/v1' },
+  { name: 'DeepSeek', endpoint: 'https://api.deepseek.com/chat/completions' },
+  { name: 'Kimi（月之暗面）', endpoint: 'https://api.moonshot.cn/v1' },
+  { name: '智谱 GLM', endpoint: 'https://open.bigmodel.cn/api/paas/v4' },
+  { name: '阿里云百炼', endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { name: '火山方舟', endpoint: 'https://ark.cn-beijing.volces.com/api/v3' },
+  { name: '硅基流动', endpoint: 'https://api.siliconflow.cn/v1' },
+]
+
 interface Props {
   open: boolean
   dataset: Dataset | null
@@ -30,6 +41,7 @@ export function AiDiagnosisDialog({ open, dataset, onClose, onSelectColumn }: Pr
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [copiedEndpoint, setCopiedEndpoint] = useState<string | null>(null)
   const requestRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
@@ -96,6 +108,16 @@ export function AiDiagnosisDialog({ open, dataset, onClose, onSelectColumn }: Pr
     }
   }
 
+  const copyEndpoint = async (endpoint: string) => {
+    try {
+      await navigator.clipboard.writeText(endpoint)
+      setCopiedEndpoint(endpoint)
+      setError(null)
+    } catch {
+      setError('复制失败，请手动选中接口地址复制')
+    }
+  }
+
   const canDiagnose = Boolean(
     settings.enabled && settings.endpoint.trim() && settings.model.trim() && settings.apiKey.trim(),
   )
@@ -122,6 +144,29 @@ export function AiDiagnosisDialog({ open, dataset, onClose, onSelectColumn }: Pr
               发送内容包括表头、字段类型、缺失/重复/异常统计和数值摘要；不发送数据行、单元格样本或高频值。
               AI 默认关闭，启用后也仅在你点击「开始诊断」时联网。
             </p>
+          </div>
+
+          <div className="ai-endpoint-presets">
+            <div className="ai-endpoint-title">
+              <strong>常见 OpenAI 兼容接口地址</strong>
+              <span>点击复制，粘贴到下方接口地址</span>
+            </div>
+            <div className="ai-endpoint-list">
+              {AI_ENDPOINT_PRESETS.map((preset) => (
+                <div className="ai-endpoint-row" key={preset.name}>
+                  <span className="ai-endpoint-name">{preset.name}</span>
+                  <code>{preset.endpoint}</code>
+                  <button
+                    type="button"
+                    className="btn btn-small"
+                    onClick={() => void copyEndpoint(preset.endpoint)}
+                  >
+                    {copiedEndpoint === preset.endpoint ? '已复制' : '复制'}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p>以上为通用/按量计费地址；Coding、Token Plan 等套餐请使用平台提供的专属地址。</p>
           </div>
 
           {!settings.enabled ? (
