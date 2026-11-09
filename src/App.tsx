@@ -667,6 +667,15 @@ export default function App() {
     [selected],
   )
 
+  const selectColumnByName = useCallback(
+    (name: string) => {
+      if (!dataset) return
+      const index = dataset.columns.findIndex((column) => column.name === name)
+      if (index >= 0) setSelected(index)
+    },
+    [dataset],
+  )
+
   /** 解析成「具体要标红的列下标集合」 */
   const redColumns = useMemo(() => {
     if (!dataset || outlierMode === 'none') return EMPTY_SET
@@ -1057,7 +1066,12 @@ export default function App() {
         onDelete={deleteTemplate}
       />
 
-      <AiDiagnosisDialog open={aiOpen} dataset={dataset} onClose={() => setAiOpen(false)} />
+      <AiDiagnosisDialog
+        open={aiOpen}
+        dataset={dataset}
+        onClose={() => setAiOpen(false)}
+        onSelectColumn={selectColumnByName}
+      />
 
       {saved ? (
         <div className="save-bar" role="status">

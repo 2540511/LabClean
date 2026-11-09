@@ -20,9 +20,10 @@ interface Props {
   open: boolean
   dataset: Dataset | null
   onClose: () => void
+  onSelectColumn?: (name: string) => void
 }
 
-export function AiDiagnosisDialog({ open, dataset, onClose }: Props) {
+export function AiDiagnosisDialog({ open, dataset, onClose, onSelectColumn }: Props) {
   const [settings, setSettings] = useState<AiSettings>(loadAiSettings)
   const [consented, setConsented] = useState(settings.enabled)
   const [result, setResult] = useState<AiDiagnosis | null>(null)
@@ -217,6 +218,8 @@ export function AiDiagnosisDialog({ open, dataset, onClose }: Props) {
 
           {result ? (
             <div className="ai-results">
+              {result.overall ? <p className="ai-overall">{result.overall}</p> : null}
+
               <section>
                 <h3>质量问题与处理建议</h3>
                 {result.issues.length === 0 ? (
@@ -235,15 +238,47 @@ export function AiDiagnosisDialog({ open, dataset, onClose }: Props) {
                           <b>依据：</b>
                           {issue.evidence}
                         </p>
+                        {issue.impact ? (
+                          <p className="ai-impact">
+                            <b>影响：</b>
+                            {issue.impact}
+                          </p>
+                        ) : null}
                         <p>
                           <b>建议：</b>
                           {issue.suggestion}
                         </p>
+                        {issue.howto ? (
+                          <div className="ai-howto">
+                            <span>{issue.howto}</span>
+                            {issue.column && onSelectColumn ? (
+                              <button
+                                type="button"
+                                className="btn btn-small"
+                                onClick={() => onSelectColumn(issue.column!)}
+                                title={`定位到列：${issue.column}`}
+                              >
+                                跳到这一列
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </article>
                     ))}
                   </div>
                 )}
               </section>
+
+              {result.questions && result.questions.length > 0 ? (
+                <section className="ai-questions">
+                  <h3>需要你确认</h3>
+                  <ul>
+                    {result.questions.map((question, index) => (
+                      <li key={`${question}-${index}`}>{question}</li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
 
               <section className="ai-report">
                 <div className="ai-report-head">

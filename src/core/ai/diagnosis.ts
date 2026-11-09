@@ -5,13 +5,20 @@ export type AiSeverity = 'high' | 'medium' | 'low'
 export interface AiDiagnosisIssue {
   title: string
   severity: AiSeverity
+  /** 涉及的列名，null 表示整体问题（如重复行） */
+  column?: string | null
   evidence: string
+  impact?: string
   suggestion: string
+  howto?: string
 }
 
 export interface AiDiagnosis {
+  overall?: string
   issues: AiDiagnosisIssue[]
   report: string
+  /** 需要用户拍板的事 */
+  questions?: string[]
 }
 
 export interface DiagnosisMessage {
@@ -101,6 +108,10 @@ function requiredString(value: unknown, field: string): string {
   return value.trim()
 }
 
+function optionalString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
 export function parseDiagnosisContent(content: string): AiDiagnosis {
   const trimmed = content
     .trim()
@@ -128,12 +139,22 @@ export function parseDiagnosisContent(content: string): AiDiagnosis {
     return {
       title: requiredString(issue.title, 'title'),
       severity,
+      column: optionalString(issue.column) || null,
       evidence: requiredString(issue.evidence, 'evidence'),
+      impact: optionalString(issue.impact),
       suggestion: requiredString(issue.suggestion, 'suggestion'),
+      howto: optionalString(issue.howto),
     }
   })
 
-  return { issues, report: requiredString(body.report, 'report') }
+  return {
+    overall: optionalString(body.overall),
+    issues,
+    report: requiredString(body.report, 'report'),
+    questions: Array.isArray(body.questions)
+      ? body.questions.filter((q): q is string => typeof q === 'string' && q.trim().length > 0)
+      : [],
+  }
 }
 
 export function parseAiResponse(payload: unknown): AiDiagnosis {

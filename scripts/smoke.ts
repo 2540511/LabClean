@@ -997,18 +997,68 @@ console.log('\n[22] AI 数据诊断（画像脱敏 / 纯函数解析 / 默认关
     ],
     report: '本次实验数据包含 3 行记录，温度列存在缺失，建议复核后处理。',
   }
-  eq('解析标准 JSON 诊断', parseDiagnosisContent(JSON.stringify(valid)), valid)
-  eq('解析代码块包裹的 JSON 诊断', parseDiagnosisContent(`\`\`\`json\n${JSON.stringify(valid)}\n\`\`\``), valid)
+  const validResult = {
+    overall: '',
+    issues: [
+      {
+        title: valid.issues[0].title,
+        severity: valid.issues[0].severity,
+        column: null,
+        evidence: valid.issues[0].evidence,
+        impact: '',
+        suggestion: valid.issues[0].suggestion,
+        howto: '',
+      },
+    ],
+    report: valid.report,
+    questions: [],
+  }
+  eq('解析标准 JSON 诊断', parseDiagnosisContent(JSON.stringify(valid)), validResult)
+  eq(
+    '解析代码块包裹的 JSON 诊断',
+    parseDiagnosisContent(`\`\`\`json\n${JSON.stringify(valid)}\n\`\`\``),
+    validResult,
+  )
   eq(
     '解析 OpenAI 兼容接口响应',
     parseAiResponse({ choices: [{ message: { content: JSON.stringify(valid) } }] }),
-    valid,
+    validResult,
   )
   eq(
     '没有质量问题时允许空建议列表',
     parseDiagnosisContent('{"issues":[],"report":"现有统计未发现明确问题。"}').issues,
     [],
   )
+
+  const legacy = parseDiagnosisContent(
+    JSON.stringify({
+      issues: [{ title: 't', severity: 'high', evidence: 'e', suggestion: 's' }],
+      report: 'r',
+    }),
+  )
+  eq('旧格式兼容：column 为 null', legacy.issues[0].column, null)
+  eq('旧格式兼容：questions 为空数组', legacy.questions, [])
+
+  const modern = parseDiagnosisContent(
+    JSON.stringify({
+      overall: 'o',
+      issues: [
+        {
+          title: 't',
+          severity: 'high',
+          column: '语文',
+          evidence: 'e',
+          impact: 'i',
+          suggestion: 's',
+          howto: 'h',
+        },
+      ],
+      report: 'r',
+      questions: ['q1', 123, ''],
+    }),
+  )
+  eq('howto 解析', modern.issues[0].howto, 'h')
+  eq('questions 过滤非字符串', modern.questions, ['q1'])
 
   const rejects = (fn: () => void): boolean => {
     try {
