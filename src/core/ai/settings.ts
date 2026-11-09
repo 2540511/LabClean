@@ -1,5 +1,8 @@
+export type AiProvider = 'api' | 'qoder'
+
 export interface AiSettings {
   enabled: boolean
+  provider: AiProvider
   endpoint: string
   model: string
   apiKey: string
@@ -9,6 +12,7 @@ const STORAGE_KEY = 'labclean.ai-settings.v1'
 
 export const DEFAULT_AI_SETTINGS: AiSettings = {
   enabled: false,
+  provider: 'api',
   endpoint: 'https://api.openai.com/v1/chat/completions',
   model: 'gpt-4o-mini',
   apiKey: '',
@@ -25,6 +29,7 @@ export function loadAiSettings(): AiSettings {
     const saved = value as Partial<AiSettings>
     return {
       enabled: saved.enabled === true,
+      provider: saved.provider === 'qoder' ? 'qoder' : 'api',
       endpoint:
         typeof saved.endpoint === 'string' && saved.endpoint.trim()
           ? saved.endpoint
@@ -38,6 +43,16 @@ export function loadAiSettings(): AiSettings {
   } catch {
     return { ...DEFAULT_AI_SETTINGS }
   }
+}
+
+export function selectAiProvider(settings: AiSettings, provider: AiProvider): AiSettings {
+  return { ...settings, provider }
+}
+
+export function isAiSettingsComplete(settings: AiSettings): boolean {
+  if (!settings.enabled) return false
+  if (settings.provider === 'qoder') return true
+  return Boolean(settings.endpoint.trim() && settings.model.trim() && settings.apiKey.trim())
 }
 
 export function persistAiSettings(settings: AiSettings): void {

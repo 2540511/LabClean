@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import { requestAiDiagnosis } from '../core/ai/client'
 import type { AiDiagnosis, AiSeverity } from '../core/ai/diagnosis'
+import { startQoderLogin } from '../core/ai/qoder-client'
 import {
   clearAiSettings,
   DEFAULT_AI_SETTINGS,
-  loadAiSettings,
+  isAiSettingsComplete,
   persistAiSettings,
+  selectAiProvider,
+  type AiProvider,
   type AiSettings,
 } from '../core/ai/settings'
 import type { Dataset } from '../core/types'
@@ -30,12 +34,20 @@ const AI_ENDPOINT_PRESETS = [
 interface Props {
   open: boolean
   dataset: Dataset | null
+  settings: AiSettings
+  onSettingsChange: Dispatch<SetStateAction<AiSettings>>
   onClose: () => void
   onSelectColumn?: (name: string) => void
 }
 
-export function AiDiagnosisDialog({ open, dataset, onClose, onSelectColumn }: Props) {
-  const [settings, setSettings] = useState<AiSettings>(loadAiSettings)
+export function AiDiagnosisDialog({
+  open,
+  dataset,
+  settings,
+  onSettingsChange,
+  onClose,
+  onSelectColumn,
+}: Props) {
   const [consented, setConsented] = useState(settings.enabled)
   const [result, setResult] = useState<AiDiagnosis | null>(null)
   const [loading, setLoading] = useState(false)
@@ -77,7 +89,7 @@ export function AiDiagnosisDialog({ open, dataset, onClose, onSelectColumn }: Pr
       apiKey: settings.apiKey.trim(),
     }
     persistAiSettings(config)
-    setSettings(config)
+    onSettingsChange(config)
     requestRef.current?.abort()
     const controller = new AbortController()
     requestRef.current = controller
@@ -118,9 +130,15 @@ export function AiDiagnosisDialog({ open, dataset, onClose, onSelectColumn }: Pr
     }
   }
 
-  const canDiagnose = Boolean(
-    settings.enabled && settings.endpoint.trim() && settings.model.trim() && settings.apiKey.trim(),
-  )
+  const changeProvider = (provider: AiProvider) => {
+    if (provider === settings.provider) return
+    requestRef.current?.abort()
+    setResult(null)
+    setError(null)
+    onSettingsChange((prev) => selectAiProvider(prev, provider))
+  }
+
+  const canDiagnose = isAiSettingsComplete(settings)
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -142,32 +160,73 @@ export function AiDiagnosisDialog({ open, dataset, onClose, onSelectColumn }: Pr
             <strong>只发送表结构，不发送数据行</strong>
             <p>
               发送内容包括表头、字段类型、缺失/重复/异常统计和数值摘要；不发送数据行、单元格样本或高频值。
-              AI 默认关闭，启用后也仅在你点击「开始诊断」时联网。
+              AI 默认关闭，启用后也仅在你点击「开始诊断」或聊天「发送」时联网。
             </p>
           </div>
 
-          <div className="ai-endpoint-presets">
-            <div className="ai-endpoint-title">
-              <strong>常见 OpenAI 兼容接口地址</strong>
-              <span>点击复制，粘贴到下方接口地址</span>
+          <div className="ai-provider-section">
+            <div className="ai-provider-label">
+              <strong>AI 来源</strong>
+              <span>两种模式互斥，切换不会删除已保存的 API 配置</span>
             </div>
-            <div className="ai-endpoint-list">
-              {AI_ENDPOINT_PRESETS.map((preset) => (
-                <div className="ai-endpoint-row" key={preset.name}>
-                  <span className="ai-endpoint-name">{preset.name}</span>
-                  <code>{preset.endpoint}</code>
-                  <button
-                    type="button"
-                    className="btn btn-small"
-                    onClick={() => void copyEndpoint(preset.endpoint)}
-                  >
-                    {copiedEndpoint === preset.endpoint ? '已复制' : '复制'}
-                  </button>
-                </div>
-              ))}
+            <div className="ai-provider-switch" role="radiogroup" aria-label="AI 来源">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={settings.provider === 'api'}
+                className={settings.provider === 'api' ? 'is-active' : undefined}
+                disabled={loading}
+                onClick={() => changeProvider('api')}
+              >
+                自定义 API
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={settings.provider === 'qoder'}
+                className={settings.provider === 'qoder' ? 'is-active' : undefined}
+                disabled={loading}
+                onClick={() => changeProvider('qoder')}
+              >
+                Qoder 账号
+              </button>
             </div>
-            <p>以上为通用/按量计费地址；Coding、Token Plan 等套餐请使用平台提供的专属地址。</p>
           </div>
+
+          {settings.provider === 'api' ? (
+            <div className="ai-endpoint-presets">
+              <div className="ai-endpoint-title">
+                <strong>常见 OpenAI 兼容接口地址</strong>
+                <span>点击复制，粘贴到下方接口地址</span>
+              </div>
+              <div className="ai-endpoint-list">
+                {AI_ENDPOINT_PRESETS.map((preset) => (
+                  <div className="ai-endpoint-row" key={preset.name}>
+                    <span className="ai-endpoint-name">{preset.name}</span>
+                    <code>{preset.endpoint}</code>
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      onClick={() => void copyEndpoint(preset.endpoint)}
+                    >
+                      {copiedEndpoint === preset.endpoint ? '已复制' : '复制'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <p>以上为通用/按量计费地址；Coding、Token Plan 等套餐请使用平台提供的专属地址。</p>
+            </div>
+          ) : (
+            <div className="ai-qoder-account">
+              <div>
+                <strong>使用 Qoder Cloud Agents</strong>
+                <p>无需填写接口地址、模型或 API Key。登录后由站点服务端调用，可能消耗 Credits。</p>
+              </div>
+              <button type="button" className="btn btn-small" onClick={startQoderLogin}>
+                登录 Qoder
+              </button>
+            </div>
+          )}
 
           {!settings.enabled ? (
             <div className="ai-consent">
@@ -177,57 +236,59 @@ export function AiDiagnosisDialog({ open, dataset, onClose, onSelectColumn }: Pr
                   checked={consented}
                   onChange={(event) => setConsented(event.target.checked)}
                 />
-                我已了解：诊断会把上述表结构和统计摘要发送给我配置的模型服务
+                我已了解：诊断和聊天会把上述表结构、统计摘要及聊天内容发送给我选择的自定义 API 或 Qoder Cloud Agents
               </label>
               <button
                 className="btn btn-primary"
                 disabled={!consented}
-                onClick={() => setSettings((prev) => ({ ...prev, enabled: true }))}
+                onClick={() => onSettingsChange((prev) => ({ ...prev, enabled: true }))}
               >
                 了解，配置 AI
               </button>
             </div>
           ) : (
             <>
-              <div className="ai-settings">
-                <label className="ai-field ai-field-wide">
-                  <span>OpenAI 兼容接口地址或 API 根地址</span>
-                  <input
-                    className="input"
-                    type="url"
-                    value={settings.endpoint}
-                    onChange={(event) => setSettings({ ...settings, endpoint: event.target.value })}
-                    disabled={loading}
-                    spellCheck={false}
-                    placeholder="https://你的服务/v1 或完整的 /chat/completions 地址"
-                  />
-                  <small>
-                    只填到 /v1 会自动补全；Failed to fetch 通常表示网络不可达、代理未配置或服务不允许跨域。
-                  </small>
-                </label>
-                <label className="ai-field">
-                  <span>模型</span>
-                  <input
-                    className="input"
-                    value={settings.model}
-                    onChange={(event) => setSettings({ ...settings, model: event.target.value })}
-                    disabled={loading}
-                    spellCheck={false}
-                  />
-                </label>
-                <label className="ai-field">
-                  <span>API Key</span>
-                  <input
-                    className="input"
-                    type="password"
-                    value={settings.apiKey}
-                    onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })}
-                    disabled={loading}
-                    autoComplete="new-password"
-                    placeholder="仅保存在当前浏览器的 localStorage"
-                  />
-                </label>
-              </div>
+              {settings.provider === 'api' ? (
+                <div className="ai-settings">
+                  <label className="ai-field ai-field-wide">
+                    <span>OpenAI 兼容接口地址或 API 根地址</span>
+                    <input
+                      className="input"
+                      type="url"
+                      value={settings.endpoint}
+                      onChange={(event) => onSettingsChange({ ...settings, endpoint: event.target.value })}
+                      disabled={loading}
+                      spellCheck={false}
+                      placeholder="https://你的服务/v1 或完整的 /chat/completions 地址"
+                    />
+                    <small>
+                      只填到 /v1 会自动补全；Failed to fetch 通常表示网络不可达、代理未配置或服务不允许跨域。
+                    </small>
+                  </label>
+                  <label className="ai-field">
+                    <span>模型</span>
+                    <input
+                      className="input"
+                      value={settings.model}
+                      onChange={(event) => onSettingsChange({ ...settings, model: event.target.value })}
+                      disabled={loading}
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="ai-field">
+                    <span>API Key</span>
+                    <input
+                      className="input"
+                      type="password"
+                      value={settings.apiKey}
+                      onChange={(event) => onSettingsChange({ ...settings, apiKey: event.target.value })}
+                      disabled={loading}
+                      autoComplete="new-password"
+                      placeholder="仅保存在当前浏览器的 localStorage"
+                    />
+                  </label>
+                </div>
+              ) : null}
 
               <div className="ai-actions">
                 <button
@@ -237,19 +298,23 @@ export function AiDiagnosisDialog({ open, dataset, onClose, onSelectColumn }: Pr
                 >
                   {loading ? '诊断中…' : result ? '重新诊断' : '开始诊断'}
                 </button>
-                <span>开始诊断时保存配置；API Key 不会写入项目文件。</span>
+                <span>
+                  {settings.provider === 'qoder'
+                    ? '当前只使用 Qoder 账号；已保存的 API Key 不会随请求发送。'
+                    : '当前只使用自定义 API；API Key 仅保存在当前浏览器，不会写入项目文件。'}
+                </span>
                 <button
                   className="btn btn-small ai-disable"
                   disabled={loading}
                   onClick={() => {
                     clearAiSettings()
-                    setSettings({ ...DEFAULT_AI_SETTINGS })
+                    onSettingsChange({ ...DEFAULT_AI_SETTINGS })
                     setConsented(false)
                     setResult(null)
                     setError(null)
                   }}
                 >
-                  停用并清除 Key
+                  停用并清除配置
                 </button>
               </div>
             </>

@@ -24,6 +24,7 @@ import {
 } from './core/pipeline'
 import { rebuildDataset } from './core/profile'
 import { buildCompareSheets, buildReportSheets } from './core/report'
+import { loadAiSettings, type AiSettings } from './core/ai/settings'
 import {
   BUILTIN_TEMPLATES,
   loadTemplates,
@@ -141,6 +142,7 @@ export default function App() {
   const [fuzzyOpen, setFuzzyOpen] = useState(false)
   const [fuzzyAuto, setFuzzyAuto] = useState(false)
   const [aiOpen, setAiOpen] = useState(false)
+  const [aiSettings, setAiSettings] = useState<AiSettings>(loadAiSettings)
 
   const clientRef = useRef<TableClient | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -973,6 +975,8 @@ export default function App() {
             onOpenTemplates={() => setTplOpen(true)}
             onOpenFuzzy={() => setFuzzyOpen(true)}
             onOpenAi={() => setAiOpen(true)}
+            aiSettings={aiSettings}
+            onAiSettingsChange={setAiSettings}
             activeIssue={activeIssue}
             issueRows={issueRows}
             onToggleIssue={toggleIssue}
@@ -1069,6 +1073,8 @@ export default function App() {
       <AiDiagnosisDialog
         open={aiOpen}
         dataset={dataset}
+        settings={aiSettings}
+        onSettingsChange={setAiSettings}
         onClose={() => setAiOpen(false)}
         onSelectColumn={selectColumnByName}
       />

@@ -15,7 +15,7 @@ npm install            # 安装依赖
 npm run dev            # 开发模式，打开 http://127.0.0.1:5173
 npm run build          # 生产构建，产物在 dist/
 npm run serve          # 零依赖静态服务器，预览 dist（默认 127.0.0.1:5173）
-npm run smoke          # 数据引擎自测（293 项断言，不依赖浏览器）
+npm run smoke          # 数据引擎自测（315 项断言，不依赖浏览器）
 npm run sample         # 重新生成 samples/实验数据示例.xlsx（5002 行，两个工作表）
 ```
 

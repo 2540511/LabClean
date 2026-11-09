@@ -1,5 +1,11 @@
 import systemPrompt from './system-prompt.txt?raw'
+import chatSystemPrompt from './chat-system-prompt.txt?raw'
 import type { Dataset } from '../types'
+import {
+  buildAiChatMessages,
+  parseAiChatResponse,
+  type AiChatMessage,
+} from './chat'
 import {
   buildDiagnosisMessages,
   normalizeChatEndpoint,
@@ -7,17 +13,24 @@ import {
   type AiDiagnosis,
 } from './diagnosis'
 import type { AiSettings } from './settings'
+import { requestQoderChat, requestQoderDiagnosis } from './qoder-client'
 
-function validatedSettings(settings: AiSettings): AiSettings {
-  if (!settings.enabled) throw new Error('AI 诊断尚未启用')
+function validatedApiSettings(settings: AiSettings): AiSettings {
   const endpoint = settings.endpoint.trim()
   const model = settings.model.trim()
   const apiKey = settings.apiKey.trim()
   if (!endpoint || !model || !apiKey) throw new Error('请完整填写接口地址、模型和 API Key')
-  return { enabled: true, endpoint: normalizeChatEndpoint(endpoint), model, apiKey }
+  return {
+    ...settings,
+    enabled: true,
+    provider: 'api',
+    endpoint: normalizeChatEndpoint(endpoint),
+    model,
+    apiKey,
+  }
 }
 
-async function responseError(response: Response, apiKey: string): Promise<Error> {
+async function responseError(response: Response, apiKey: string, action: string): Promise<Error> {
   let detail = ''
   try {
     const body: unknown = await response.json()
@@ -32,7 +45,7 @@ async function responseError(response: Response, apiKey: string): Promise<Error>
     // 非 JSON 错误页只保留 HTTP 状态
   }
   const safeDetail = detail.split(apiKey).join('[已隐藏]')
-  return new Error(`诊断请求失败（HTTP ${response.status}）${safeDetail ? `：${safeDetail}` : ''}`)
+  return new Error(`${action}请求失败（HTTP ${response.status}）${safeDetail ? `：${safeDetail}` : ''}`)
 }
 
 function connectionError(cause: unknown, settings: AiSettings): Error {
@@ -47,13 +60,13 @@ function connectionError(cause: unknown, settings: AiSettings): Error {
   )
 }
 
-export async function requestAiDiagnosis(
-  dataset: Dataset,
-  settings: AiSettings,
-  signal?: AbortSignal,
-  fetchImpl: typeof fetch = fetch,
-): Promise<AiDiagnosis> {
-  const config = validatedSettings(settings)
+async function requestPayload(
+  config: AiSettings,
+  body: Record<string, unknown>,
+  action: string,
+  signal: AbortSignal | undefined,
+  fetchImpl: typeof fetch,
+): Promise<unknown> {
   let response: Response
   try {
     response = await fetchImpl(config.endpoint, {
@@ -64,19 +77,61 @@ export async function requestAiDiagnosis(
       },
       credentials: 'omit',
       referrerPolicy: 'no-referrer',
-      body: JSON.stringify({
-        model: config.model,
-        temperature: 0.2,
-        response_format: { type: 'json_object' },
-        messages: buildDiagnosisMessages(dataset, systemPrompt),
-      }),
+      body: JSON.stringify(body),
       signal,
     })
   } catch (cause) {
     if (cause instanceof Error && cause.name === 'AbortError') throw cause
     throw connectionError(cause, config)
   }
-  if (!response.ok) throw await responseError(response, config.apiKey)
-  const payload: unknown = await response.json()
+  if (!response.ok) throw await responseError(response, config.apiKey, action)
+  return response.json()
+}
+
+export async function requestAiDiagnosis(
+  dataset: Dataset,
+  settings: AiSettings,
+  signal?: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AiDiagnosis> {
+  if (!settings.enabled) throw new Error('AI 尚未启用，请先完成配置')
+  if (settings.provider === 'qoder') return requestQoderDiagnosis(dataset, signal, fetchImpl)
+  const config = validatedApiSettings(settings)
+  const payload = await requestPayload(
+    config,
+    {
+      model: config.model,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: buildDiagnosisMessages(dataset, systemPrompt),
+    },
+    '诊断',
+    signal,
+    fetchImpl,
+  )
   return parseAiResponse(payload)
+}
+
+export async function requestAiChat(
+  dataset: Dataset,
+  history: AiChatMessage[],
+  settings: AiSettings,
+  signal?: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string> {
+  if (!settings.enabled) throw new Error('AI 尚未启用，请先完成配置')
+  if (settings.provider === 'qoder') return requestQoderChat(dataset, history, signal, fetchImpl)
+  const config = validatedApiSettings(settings)
+  const payload = await requestPayload(
+    config,
+    {
+      model: config.model,
+      temperature: 0.3,
+      messages: buildAiChatMessages(dataset, history, chatSystemPrompt),
+    },
+    '聊天',
+    signal,
+    fetchImpl,
+  )
+  return parseAiChatResponse(payload)
 }

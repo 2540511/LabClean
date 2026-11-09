@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import type { Column, Dataset } from '../core/types'
 import { FILTER_LABEL, resolveFillValue, type FillStrategy, type FilterOp } from '../core/clean'
 import type { OpSpec, StepRecord } from '../core/pipeline'
+import type { AiSettings } from '../core/ai/settings'
 import type { DatasetDiff } from '../lib/diff'
 import type { IssueRowKind, IssueRowSelection } from '../lib/analyze'
 import { cx, int, num, pct } from '../lib/format'
+import { AiChatPanel } from './AiChatPanel'
 import { AuxPanel } from './AuxPanel'
 
 const TYPE_LABEL: Record<string, string> = {
@@ -34,6 +37,8 @@ interface Props {
   onOpenTemplates: () => void
   onOpenFuzzy: () => void
   onOpenAi: () => void
+  aiSettings: AiSettings
+  onAiSettingsChange: Dispatch<SetStateAction<AiSettings>>
   activeIssue: IssueRowSelection | null
   issueRows: number[]
   onToggleIssue: (kind: IssueRowKind) => void
@@ -66,6 +71,8 @@ export function Inspector({
   onOpenTemplates,
   onOpenFuzzy,
   onOpenAi,
+  aiSettings,
+  onAiSettingsChange,
   activeIssue,
   issueRows,
   onToggleIssue,
@@ -76,6 +83,7 @@ export function Inspector({
   const [filterValue, setFilterValue] = useState('')
   const [renameValue, setRenameValue] = useState(column.name)
   const [opsOpen, setOpsOpen] = useState(false)
+  const [tab, setTab] = useState<'data' | 'chat'>('data')
   const stats = column.numeric
   const numericText = column.type === 'text' && column.issues.some((i) => i.code === 'THOUSANDS_SEP')
 
@@ -116,6 +124,38 @@ export function Inspector({
 
   return (
     <aside className="inspector">
+      <div className="inspector-tabs" role="tablist" aria-label="右侧功能面板">
+        <button
+          type="button"
+          role="tab"
+          id="inspector-data-tab"
+          aria-selected={tab === 'data'}
+          aria-controls="inspector-data-panel"
+          className={cx('inspector-tab', tab === 'data' && 'is-active')}
+          onClick={() => setTab('data')}
+        >
+          数据
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="inspector-chat-tab"
+          aria-selected={tab === 'chat'}
+          aria-controls="inspector-chat-panel"
+          className={cx('inspector-tab', tab === 'chat' && 'is-active')}
+          onClick={() => setTab('chat')}
+        >
+          AI 聊天
+        </button>
+      </div>
+
+      <div
+        className="inspector-data"
+        hidden={tab !== 'data'}
+        id="inspector-data-panel"
+        role="tabpanel"
+        aria-labelledby="inspector-data-tab"
+      >
       <section className="panel">
         <div className="panel-head">
           列画像
@@ -327,7 +367,7 @@ export function Inspector({
           <span className="panel-hint">{opsOpen ? '收起' : '点击'}</span>
         </summary>
         <div className="panel-body">
-          <div className="ops-sub-title">行筛选 · 保留符合条件的行</div>
+          <div className="ops-sub-title">行/列筛选 · 保留符合条件的行/列</div>
           <div className="fill-row">
             <select
               className="select select-narrow"
@@ -355,7 +395,7 @@ export function Inspector({
             />
           </div>
           <button className="btn btn-ghost block-btn" disabled={!canFilter} onClick={runFilter}>
-            保留「{column.name}」{FILTER_LABEL[filterOp]}「{filterValue.trim() || '…'}」的行
+            保留「{column.name}」{FILTER_LABEL[filterOp]}「{filterValue.trim() || '…'}」的行/列
           </button>
           <div className="hint">
             大于/小于按数值比较（条件值不是数字时按字符串序），空值不保留；包含/不包含按文本，忽略大小写
@@ -459,6 +499,15 @@ export function Inspector({
           )}
         </div>
       </section>
+      </div>
+
+      <AiChatPanel
+        dataset={dataset}
+        active={tab === 'chat'}
+        settings={aiSettings}
+        onSettingsChange={onAiSettingsChange}
+        onOpenSettings={onOpenAi}
+      />
     </aside>
   )
 }

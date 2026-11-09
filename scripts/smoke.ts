@@ -55,7 +55,15 @@ import {
   parseAiResponse,
   parseDiagnosisContent,
 } from '../src/core/ai/diagnosis'
-import { DEFAULT_AI_SETTINGS, loadAiSettings, persistAiSettings } from '../src/core/ai/settings'
+import {
+  DEFAULT_AI_SETTINGS,
+  isAiSettingsComplete,
+  loadAiSettings,
+  persistAiSettings,
+  selectAiProvider,
+} from '../src/core/ai/settings'
+import { buildAiChatMessages, parseAiChatResponse } from '../src/core/ai/chat'
+import { buildQoderChatRequest, buildQoderDiagnosisRequest } from '../src/core/ai/qoder-client'
 
 let passed = 0
 const failures: string[] = []
@@ -1082,6 +1090,7 @@ console.log('\n[22] AI 数据诊断（画像脱敏 / 纯函数解析 / 默认关
   check('拒绝缺少模型内容', rejects(() => parseAiResponse({ choices: [] })))
 
   eq('AI 默认配置关闭', DEFAULT_AI_SETTINGS.enabled, false)
+  eq('AI 默认使用自定义 API', DEFAULT_AI_SETTINGS.provider, 'api')
   eq('无存储环境读取仍为关闭', loadAiSettings().enabled, false)
   try {
     persistAiSettings({ ...DEFAULT_AI_SETTINGS, apiKey: 'DO_NOT_WRITE_TO_CODE' })
@@ -1090,9 +1099,57 @@ console.log('\n[22] AI 数据诊断（画像脱敏 / 纯函数解析 / 默认关
     check('无存储环境保存配置不抛错', false)
   }
 
+  const apiConfig = {
+    ...DEFAULT_AI_SETTINGS,
+    enabled: true,
+    apiKey: 'API_KEY_SENTINEL',
+  }
+  const qoderConfig = selectAiProvider(apiConfig, 'qoder')
+  eq('选择 Qoder 后互斥切换来源', qoderConfig.provider, 'qoder')
+  eq('切换来源不删除 API 配置', qoderConfig.apiKey, 'API_KEY_SENTINEL')
+  eq('Qoder 模式无需接口和 Key 即已配置', isAiSettingsComplete(qoderConfig), true)
+  eq('切回 API 后只使用 API 来源', selectAiProvider(qoderConfig, 'api').provider, 'api')
+  eq('未启用时 Qoder 仍不可用', isAiSettingsComplete({ ...qoderConfig, enabled: false }), false)
+  eq(
+    'API 模式缺少 Key 时不可用',
+    isAiSettingsComplete({ ...apiConfig, apiKey: '' }),
+    false,
+  )
+  const qoderDiagnosis = buildQoderDiagnosisRequest(aiDs)
+  eq('Qoder 诊断使用固定动作', qoderDiagnosis.action, 'diagnosis')
+  eq('Qoder 诊断复用脱敏画像', qoderDiagnosis.profile, context)
+  check('Qoder 请求不携带 API Key', !('apiKey' in qoderDiagnosis))
+
   const prompt = readFileSync(join(process.cwd(), 'src/core/ai/system-prompt.txt'), 'utf8')
   check('系统提示词要求只读且禁止执行清洗', prompt.includes('不生成或执行清洗操作'))
   check('系统提示词要求严格 JSON 返回', prompt.includes('只返回一个合法 JSON 对象'))
+
+  const chatHistory = [
+    { role: 'user' as const, content: '温度缺失怎么处理？' },
+    { role: 'assistant' as const, content: '先复核缺失原因。' },
+  ]
+  const qoderChat = buildQoderChatRequest(aiDs, chatHistory)
+  eq('Qoder 聊天保留历史顺序', qoderChat.messages, chatHistory)
+  check('Qoder 聊天画像不包含秘密行值', !qoderChat.profile.includes('SECRET'))
+  const chatMessages = buildAiChatMessages(aiDs, chatHistory, 'CHAT_SYSTEM_SENTINEL')
+  eq('聊天请求包含系统、画像和历史', chatMessages.length, 4)
+  eq('聊天系统提示词由调用方原样注入', chatMessages[0].content, 'CHAT_SYSTEM_SENTINEL')
+  eq('聊天历史保持原顺序', chatMessages.slice(2), chatHistory)
+  check('聊天画像声明没有数据行', chatMessages[1].content.includes('没有数据行'))
+  check('聊天消息全文不包含秘密数据值', !chatMessages.some((m) => m.content.includes('SECRET')))
+  eq('构造聊天上下文不修改数据行', JSON.stringify(aiDs.rows), rowsBefore)
+  eq(
+    '解析并清理聊天文本',
+    parseAiChatResponse({ choices: [{ message: { content: '  可以先复核缺失原因。  ' } }] }),
+    '可以先复核缺失原因。',
+  )
+  check(
+    '拒绝空聊天内容',
+    rejects(() => parseAiChatResponse({ choices: [{ message: { content: '   ' } }] })),
+  )
+  const chatPrompt = readFileSync(join(process.cwd(), 'src/core/ai/chat-system-prompt.txt'), 'utf8')
+  check('聊天提示词要求只读且禁止执行清洗', chatPrompt.includes('不生成或执行清洗操作'))
+  check('聊天提示词要求普通文字回复', chatPrompt.includes('不要返回 JSON'))
 }
 
 console.log('\n[23] 问题行定位（缺失 / 异常 / 合计行）')
