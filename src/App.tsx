@@ -865,7 +865,7 @@ export default function App() {
 
         {sources.length > 1 ? (
           <button className="btn" onClick={exportAll} disabled={!!busy}>
-            导出全部
+            导出数据对比
           </button>
         ) : null}
         {active ? (
